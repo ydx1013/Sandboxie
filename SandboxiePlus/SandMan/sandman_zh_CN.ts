@@ -918,8 +918,8 @@ Please browse to the correct user profile directory.</oldsource>
     </message>
     <message>
         <location filename="Wizards/SetupWizard.cpp" line="290"/>
-        <source>You can request a free %1-day evaluation certificate up to %2 times for any one Hardware ID</source>
-        <translation type="unfinished"></translation>
+         <source>You can request a free %1-day evaluation certificate up to %2 times for any one Hardware ID</source>
+        <translation>对于任何一个硬件ID，您最多可以请求%2次免费的%1天试用证书</translation>
     </message>
     <message>
         <location filename="Wizards/SetupWizard.cpp" line="315"/>
@@ -1740,18 +1740,18 @@ Note: The update check is often behind the latest GitHub release to ensure that 
         <location filename="Windows/OptionsAdvanced.cpp" line="730"/>
         <location filename="Windows/OptionsAdvanced.cpp" line="739"/>
         <source>bytes (unlimited)</source>
-        <translation type="unfinished"></translation>
+        <translation>字节(无限制)</translation>
     </message>
     <message>
         <location filename="Windows/OptionsAdvanced.cpp" line="733"/>
         <location filename="Windows/OptionsAdvanced.cpp" line="742"/>
         <source>bytes (%1)</source>
-        <translation type="unfinished"></translation>
+        <translation>字节 (%1)</translation>
     </message>
     <message>
         <location filename="Windows/OptionsAdvanced.cpp" line="748"/>
         <source>unlimited</source>
-        <translation type="unfinished"></translation>
+        <translation>无限制</translation>
     </message>
     <message>
         <location filename="Windows/OptionsAdvanced.cpp" line="920"/>
@@ -4387,19 +4387,19 @@ This file is part of Sandboxie and all changed done to it will be reverted next 
     <message>
         <location filename="SandMan.cpp" line="1658"/>
         <source>The value is not an existing directory or executable.</source>
-        <translation type="unfinished"></translation>
+        <translation>该值不存在或不可执行文件。</translation>
     </message>
     <message>
         <location filename="SandMan.cpp" line="1663"/>
         <location filename="SandMan.cpp" line="1679"/>
         <source>You typed a wrong box name! Nothing was changed.</source>
-        <translation type="unfinished"></translation>
+        <translation>你输入了一个错误的沙盘名称！没有任何更改</translation>
     </message>
     <message>
         <location filename="SandMan.cpp" line="1667"/>
         <location filename="SandMan.cpp" line="1683"/>
         <source>User canceled this operation.</source>
-        <translation type="unfinished"></translation>
+        <translation>用户取消操作</translation>
     </message>
     <message>
         <location filename="SandMan.cpp" line="2014"/>
@@ -5507,8 +5507,8 @@ Error: %1</source>
     </message>
     <message>
         <location filename="Views/SbieView.cpp" line="1421"/>
-        <source>Please enter a new alias for the Sandbox.</source>
-        <translation type="unfinished"></translation>
+        <source>请输入沙盒的新别名。</source>
+        <translation></translation>
     </message>
     <message>
         <location filename="Views/SbieView.cpp" line="1430"/>
@@ -5585,7 +5585,7 @@ Error: %1</source>
         <location filename="Views/SbieView.cpp" line="1807"/>
         <source>This sandbox is currently disabled or restricted to specific groups or users. Would you like to allow access for everyone?</source>
         <oldsource>This sandbox is disabled or restricted to a group/user, do you want to allow box for everybody ?</oldsource>
-        <translation type="unfinished">此沙盒已禁用或仅限于特定组/用户，确定要编辑它吗？</translation>
+        <translation>此沙盒已禁用或仅限于特定组/用户，确定要编辑它吗？</translation>
     </message>
 </context>
 <context>
@@ -5777,22 +5777,22 @@ Error: %1</source>
     <message>
         <location filename="Windows/SettingsWindow.cpp" line="1327"/>
         <source>Expires in: %1 Days</source>
-        <translation type="unfinished"></translation>
+        <translation>过期时间：%1天</translation>
     </message>
     <message>
         <location filename="Windows/SettingsWindow.cpp" line="1329"/>
         <source>Expires: %1 Days ago</source>
-        <translation type="unfinished"></translation>
+        <translation>过期时间：%1天前</translation>
     </message>
     <message>
         <location filename="Windows/SettingsWindow.cpp" line="1340"/>
         <source>Options: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>选项: %1</translation>
     </message>
     <message>
         <location filename="Windows/SettingsWindow.cpp" line="1345"/>
         <source>Security/Privacy Enhanced &amp; App Boxes (SBox): %1</source>
-        <translation type="unfinished"></translation>
+        <translation>安全/隐私增强 &amp; 应用沙盒(SBox): %1</translation>
     </message>
     <message>
         <location filename="Windows/SettingsWindow.cpp" line="1345"/>
@@ -5800,7 +5800,7 @@ Error: %1</source>
         <location filename="Windows/SettingsWindow.cpp" line="1347"/>
         <location filename="Windows/SettingsWindow.cpp" line="1348"/>
         <source>Enabled</source>
-        <translation type="unfinished"></translation>
+        <translation>启用</translation>
     </message>
     <message>
         <location filename="Windows/SettingsWindow.cpp" line="1345"/>
@@ -5808,22 +5808,22 @@ Error: %1</source>
         <location filename="Windows/SettingsWindow.cpp" line="1347"/>
         <location filename="Windows/SettingsWindow.cpp" line="1348"/>
         <source>Disabled</source>
-        <translation type="unfinished">禁用</translation>
+        <translation>禁用</translation>
     </message>
     <message>
         <location filename="Windows/SettingsWindow.cpp" line="1346"/>
         <source>Encrypted Sandboxes (EBox): %1</source>
-        <translation type="unfinished"></translation>
+        <translation>加密沙盒 (EBox): %1</translation>
     </message>
     <message>
         <location filename="Windows/SettingsWindow.cpp" line="1347"/>
         <source>Network Interception (NetI): %1</source>
-        <translation type="unfinished"></translation>
+        <translation>网络监听 (NetI): %1</translation>
     </message>
     <message>
         <location filename="Windows/SettingsWindow.cpp" line="1348"/>
         <source>Sandboxie Desktop (Desk): %1</source>
-        <translation type="unfinished"></translation>
+        <translation>沙盒桌面 (Desk): %1</translation>
     </message>
     <message>
         <location filename="Windows/SettingsWindow.cpp" line="1363"/>
@@ -5857,12 +5857,12 @@ Error: %1</source>
     <message>
         <location filename="Windows/SettingsWindow.cpp" line="1409"/>
         <source>Sandboxie-Plus - Get EVALUATION Certificate</source>
-        <translation type="unfinished"></translation>
+        <translation>Sandboxie-Plus -获取试用证书</translation>
     </message>
     <message>
         <location filename="Windows/SettingsWindow.cpp" line="1409"/>
-        <source>Please enter your email address to receive a free %1-day evaluation certificate, which will be issued to %2 and locked to the current hardware.
-You can request up to %3 evaluation certificates for each unique hardware ID.</source>
+        <source>请输入您的电子邮件地址以接收免费的%1天评估证书，该证书将颁发给%2并锁定到当前硬件。
+您最多可以为每个唯一的硬件ID请求%3个评估证书。</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -5884,7 +5884,7 @@ You can request up to %3 evaluation certificates for each unique hardware ID.</s
     <message>
         <location filename="Windows/SettingsWindow.cpp" line="2018"/>
         <source>The evaluation certificate has been successfully applied. Enjoy your free trial!</source>
-        <translation type="unfinished"></translation>
+        <translation >试用证书已成功申请。 请开始免费试用！</translation>
     </message>
     <message>
         <location filename="Engine/BoxObject.cpp" line="91"/>
@@ -6133,12 +6133,12 @@ You can request up to %3 evaluation certificates for each unique hardware ID.</s
     <message>
         <location filename="Windows/SettingsWindow.cpp" line="1692"/>
         <source>Set Force in Sandbox</source>
-        <translation type="unfinished"></translation>
+        <translation>设置为强制在沙盒中</translation>
     </message>
     <message>
         <location filename="Windows/SettingsWindow.cpp" line="1701"/>
         <source>Set Open Path in Sandbox</source>
-        <translation type="unfinished"></translation>
+        <translation>设置为在沙盘中打开目录</translation>
     </message>
     <message>
         <location filename="Windows/SettingsWindow.cpp" line="1990"/>
@@ -8189,7 +8189,7 @@ Note:  Forced Programs and Force Folders settings for a sandbox do not apply to 
 This is done to prevent rogue processes inside the sandbox from creating a renamed copy of themselves and accessing protected resources. Another exploit vector is the injection of a library into an authorized process to get access to everything it is allowed to access. Using Host Image Protection, this can be prevented by blocking applications (installed on the host) running inside a sandbox from loading libraries from the sandbox itself.</source>
         <oldsource>Sandboxie’s resource access rules often discriminate against program binaries located inside the sandbox. OpenFilePath and OpenKeyPath work only for application binaries located on the host natively. In order to define a rule without this restriction, OpenPipePath or OpenConfPath must be used. Likewise, all Closed(File|Key|Ipc)Path directives which are defined by negation e.g. ‘ClosedFilePath=! iexplore.exe,C:Users*’ will be always closed for binaries located inside a sandbox. Both restriction policies can be disabled on the “Access policies” page.
 This is done to prevent rogue processes inside the sandbox from creating a renamed copy of themselves and accessing protected resources. Another exploit vector is the injection of a library into an authorized process to get access to everything it is allowed to access. Using Host Image Protection, this can be prevented by blocking applications (installed on the host) running inside a sandbox from loading libraries from the sandbox itself.</oldsource>
-        <translation type="unfinished">Sandboxie 的资源访问规则通常对位于沙盒内的二进制程序具有歧视性
+        <translation>Sandboxie 的资源访问规则通常对位于沙盒内的二进制程序具有歧视性
 
 一般情况下，OpenFilePath 和 OpenKeyPath 只对宿主机上的原生程序（安装在宿主上的）有效
 为了定义没有此类限制的规则，则必须使用 OpenPipePath 和 OpenConfPath
@@ -8240,13 +8240,13 @@ This is done to prevent rogue processes inside the sandbox from creating a renam
         <location filename="Forms/OptionsWindow.ui" line="1666"/>
         <location filename="Forms/OptionsWindow.ui" line="1740"/>
         <source>unlimited</source>
-        <translation type="unfinished"></translation>
+        <translation>无限制</translation>
     </message>
     <message>
         <location filename="Forms/OptionsWindow.ui" line="1724"/>
         <location filename="Forms/OptionsWindow.ui" line="1754"/>
         <source>bytes</source>
-        <translation type="unfinished"></translation>
+        <translation>字节</translation>
     </message>
     <message>
         <location filename="Forms/OptionsWindow.ui" line="1837"/>
@@ -8831,7 +8831,7 @@ Please note that this values are currently user specific and saved globally for 
         <location filename="Forms/OptionsWindow.ui" line="432"/>
         <source>When &lt;a href=&quot;sbie://docs/boxencryption&quot;&gt;Box Encryption&lt;/a&gt; is enabled the box&apos;s root folder, including its registry hive, is stored in an encrypted disk image, using &lt;a href=&quot;https://diskcryptor.org&quot;&gt;Disk Cryptor&apos;s&lt;/a&gt; AES-XTS implementation.</source>
         <oldsource>When &lt;a href=&quot;sbie://docs/boxencryption&quot;&gt;Box Encryption&lt;/a&gt; is enabled the box’s root folder, including its registry hive, is stored in an encrypted disk image, using &lt;a href=&quot;https://diskcryptor.org&quot;&gt;Disk Cryptor&apos;s&lt;/a&gt; AES-XTS implementation.</oldsource>
-        <translation type="unfinished">当 &lt;a href=&quot;sbie://docs/boxencryption&quot;&gt;沙盒加密&lt;/a&gt; 为沙盒根目录启用时，包括虚拟注册表在内，沙盒内容将会被存储在加密的磁盘映像中， 使用 &lt;a href=&quot;https://diskcryptor.org&quot;&gt;Disk Cryptor&apos;s&lt;/a&gt; AES-XTS 实现。</translation>
+        <translation>当 &lt;a href=&quot;sbie://docs/boxencryption&quot;&gt;沙盒加密&lt;/a&gt; 为沙盒根目录启用时，包括虚拟注册表在内，沙盒内容将会被存储在加密的磁盘映像中， 使用 &lt;a href=&quot;https://diskcryptor.org&quot;&gt;Disk Cryptor&apos;s&lt;/a&gt; AES-XTS 实现。</translation>
     </message>
     <message>
         <location filename="Forms/OptionsWindow.ui" line="348"/>
@@ -9186,19 +9186,19 @@ Sandboxie 提供了针对这些情况的处理选项，可以在此页面进行�
         <location filename="Forms/OptionsWindow.ui" line="4790"/>
         <source>Hide Firmware Information</source>
         <oldsource>Hide Firmware Informations</oldsource>
-        <translation type="unfinished">隐藏固件信息</translation>
+        <translation>隐藏固件信息</translation>
     </message>
     <message>
         <location filename="Forms/OptionsWindow.ui" line="4916"/>
         <source>Some programs read system details through WMI (a Windows built-in database) instead of normal ways. For example, &quot;tasklist.exe&quot; could get full processes list through accessing WMI, even if &quot;HideOtherBoxes&quot; is used. Enable this option to stop this behaviour.</source>
         <oldsource>Some programs read system deatils through WMI(A Windows built-in database) instead of normal ways. For example,&quot;tasklist.exe&quot; could get full processes list even if &quot;HideOtherBoxes&quot; is opened through accessing WMI. Enable this option to stop these behaviour.</oldsource>
-        <translation type="unfinished">一些程序通过WMI（Windows内置数据库）而不是常规方式读取系统细节信息。例如，即使通过访问WMI打开“HideOtherBoxs”，“tasklist.exe”也可以获得完整的进程列表。启用此选项可阻止这些行为。</translation>
+        <translation>一些程序通过WMI（Windows内置数据库）而不是常规方式读取系统细节信息。例如，即使通过访问WMI打开“HideOtherBoxs”，“tasklist.exe”也可以获得完整的进程列表。启用此选项可阻止这些行为。</translation>
     </message>
     <message>
         <location filename="Forms/OptionsWindow.ui" line="4919"/>
         <source>Prevent sandboxed processes from accessing system details through WMI (see tooltip for more info)</source>
         <oldsource>Prevent sandboxed processes from accessing system deatils through WMI (see tooltip for more Info)</oldsource>
-        <translation type="unfinished">防止沙盒进程通过WMI访问系统细节信息（有关更多信息，请参阅工具提示）</translation>
+        <translation>防止沙盒进程通过WMI访问系统细节信息（有关更多信息，请参阅工具提示）</translation>
     </message>
     <message>
         <location filename="Forms/OptionsWindow.ui" line="4851"/>
@@ -9219,7 +9219,7 @@ Sandboxie 提供了针对这些情况的处理选项，可以在此页面进行�
         <location filename="Forms/OptionsWindow.ui" line="4797"/>
         <source>Dump the current Firmware Tables to HKCU\System\SbieCustom</source>
         <oldsource>Dump the current Firmare Tables to HKCU\System\SbieCustom</oldsource>
-        <translation type="unfinished">将当前固件表转储到HKCU\System\SbieCustom</translation>
+        <translation>将当前固件表转储到HKCU\System\SbieCustom</translation>
     </message>
     <message>
         <location filename="Forms/OptionsWindow.ui" line="4800"/>
@@ -9229,12 +9229,12 @@ Sandboxie 提供了针对这些情况的处理选项，可以在此页面进行�
     <message>
         <location filename="Forms/OptionsWindow.ui" line="4830"/>
         <source>Hide Disk Serial Number</source>
-        <translation type="unfinished"></translation>
+        <translation>硬盘序列号</translation>
     </message>
     <message>
         <location filename="Forms/OptionsWindow.ui" line="4837"/>
         <source>Obfuscate known unique identifiers in the registry</source>
-        <translation type="unfinished"></translation>
+        <translation>混淆注册表中的已知唯一标识符</translation>
     </message>
     <message>
         <location filename="Forms/OptionsWindow.ui" line="5142"/>
@@ -10301,12 +10301,12 @@ Sandboxie 提供了针对这些情况的处理选项，可以在此页面进行�
         <location filename="Forms/SettingsWindow.ui" line="643"/>
         <source>Add &apos;Set Force in Sandbox&apos; to the context menu</source>
         <oldsource>Add ‘Set Force in Sandbox&apos; to the context menu</oldsource>
-        <translation type="unfinished"></translation>
+        <translation>添加‘强制在沙盘中打开’到上下文菜单</translation>
     </message>
     <message>
         <location filename="Forms/SettingsWindow.ui" line="650"/>
         <source>Add &apos;Set Open Path in Sandbox&apos; to context menu</source>
-        <translation type="unfinished"></translation>
+        <translation>添加‘在沙盘中打开目录’到上下文菜单</translation>
     </message>
     <message>
         <location filename="Forms/SettingsWindow.ui" line="1583"/>
@@ -10326,7 +10326,7 @@ Sandboxie 提供了针对这些情况的处理选项，可以在此页面进行�
     <message>
         <location filename="Forms/SettingsWindow.ui" line="1745"/>
         <source>Cert Info</source>
-        <translation type="unfinished"></translation>
+        <translation>证书信息</translation>
     </message>
     <message>
         <location filename="Forms/SettingsWindow.ui" line="1758"/>
