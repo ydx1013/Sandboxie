@@ -6,8 +6,14 @@
 #include "..\Models\TraceModel.h"
 #include "..\..\MiscHelpers\Common\Common.h"
 #include "..\..\MiscHelpers\Common\CheckList.h"
+#include "..\..\MiscHelpers\Common\CheckableComboBox.h"
 #include "SbieView.h"
 #include <QtConcurrent>
+#include <QEvent>
+#include <QMessageBox>
+#include <QPushButton>
+#include <QScrollBar>
+#include <QToolButton>
 
 //class CTraceFilterProxyModel : public CSortFilterProxyModel
 //{
@@ -116,6 +122,7 @@ CTraceTree::CTraceTree(QWidget* parent)
 	//m_pMainLayout->addWidget(CFinder::AddFinder(m_pTreeList, this, CFinder::eHighLightDefault, &pFinder));
 	m_pSplitter->addWidget(CFinder::AddFinder(m_pTreeList, this, CFinder::eHighLightDefault, &pFinder));
 	pFinder->SetModel(m_pTraceModel);
+	pFinder->SetAlwaysRaw();
 	//QObject::connect(pFinder, SIGNAL(SelectNext()), this, SLOT(SelectNext()));
 
 
@@ -145,14 +152,13 @@ CTraceTree::~CTraceTree()
 	theConf->SetBlob("MainWindow/TraceSplitter", m_pSplitter->saveState());
 }
 
-void CTraceTree::SetFilter(const QString& Exp, int iOptions, int Column) 
+void CTraceTree::SetFilter(const QRegularExpression& Exp, int iOptions, int /*Column*/) 
 {
-	bool bReset = m_bHighLight != ((iOptions & CFinder::eHighLight) != 0) || (!m_bHighLight && m_FilterExp != Exp);
+	QString ExpStr = Exp.pattern();
+	bool bReset = m_bHighLight != ((iOptions & CFinder::eHighLight) != 0) || (!m_bHighLight && m_FilterExp != ExpStr);
 
-	//QString ExpStr = ((iOptions & CFinder::eRegExp) == 0) ? Exp : (".*" + QRegularExpression::escape(Exp) + ".*");
-	//QRegularExpression RegExp(ExpStr, (iOptions & CFinder::eCaseSens) != 0 ? QRegularExpression::NoPatternOption : QRegularExpression::CaseInsensitiveOption);
 	//m_FilterExp = RegExp;
-	m_FilterExp = Exp;
+	m_FilterExp = ExpStr;
 	m_bHighLight = (iOptions & CFinder::eHighLight) != 0;
 	//m_FilterCol = Col;
 
@@ -160,7 +166,7 @@ void CTraceTree::SetFilter(const QString& Exp, int iOptions, int Column)
 		emit FilterChanged();
 }
 
-void CTraceTree::ItemSelection(const QItemSelection& selected, const QItemSelection& deselected)
+void CTraceTree::ItemSelection(const QItemSelection& /*selected*/, const QItemSelection& /*deselected*/)
 {
 	QItemSelectionModel* selectionModel = m_pTreeList->selectionModel();
 	QItemSelection selection = selectionModel->selection();
@@ -182,7 +188,7 @@ void CTraceTree::ItemSelection(const QItemSelection& selected, const QItemSelect
 // CMonitorList
 
 CMonitorList::CMonitorList(QWidget* parent) 
-	: CPanelWidget<QTreeViewEx>(parent) 
+	: CPanelWidgetTmpl<QTreeViewEx>(NULL, parent) 
 {
 	m_pTreeList->setAlternatingRowColors(theConf->GetBool("Options/AltRowColors", false));
 
@@ -232,6 +238,7 @@ CMonitorList::~CMonitorList()
 ////////////////////////////////////////////////////////////////////////////////////////
 // CTraceView
 
+
 CTraceView::CTraceView(bool bStandAlone, QWidget* parent) : QWidget(parent)
 {
 	m_FullRefresh = true;
@@ -240,7 +247,6 @@ CTraceView::CTraceView(bool bStandAlone, QWidget* parent) : QWidget(parent)
 	m_LastCount = 0;
 	m_bUpdatePending = false;
 
-	m_FilterPid = 0;
 	m_FilterTid = 0;
 	m_FilterStatus = 0;
 
@@ -266,10 +272,10 @@ CTraceView::CTraceView(bool bStandAlone, QWidget* parent) : QWidget(parent)
 	m_pTraceToolBar->layout()->setSpacing(3);
 
 	m_pTraceToolBar->addWidget(new QLabel(tr("PID:")));
-	m_pTracePid = new QComboBox();
-	m_pTracePid->addItem(tr("[All]"), 0);
-	m_pTracePid->setMinimumWidth(225);
-	connect(m_pTracePid, SIGNAL(currentIndexChanged(int)), this, SLOT(OnSetPidFilter()));
+	m_pTracePid = new CCheckableComboBox();
+	m_pTracePid->m_SelectItems = tr("[All]");
+	m_pTracePid->setMinimumWidth(300);
+	connect(m_pTracePid->model(), SIGNAL(itemChanged(QStandardItem*)), this, SLOT(OnSetPidFilter(QStandardItem*)));
 	m_pTraceToolBar->addWidget(m_pTracePid);
 
 	m_pTraceToolBar->addWidget(new QLabel(tr("TID:")));
@@ -287,7 +293,7 @@ CTraceView::CTraceView(bool bStandAlone, QWidget* parent) : QWidget(parent)
 	m_pTraceType->setNoneCheckedText(tr("[All]"));
 	foreach(quint32 type, CTraceEntry::AllTypes()) 
 		m_pTraceType->addCheckItem(CTraceEntry::GetTypeStr(type), type, Qt::Unchecked);
-	m_pTraceType->setMinimumWidth(100);
+	m_pTraceType->adjustWidthForItems();
 	connect(m_pTraceType, SIGNAL(globalCheckStateChanged(int)), this, SLOT(OnSetFilter()));
 	m_pTraceToolBar->addWidget(m_pTraceType);
 
@@ -332,9 +338,40 @@ CTraceView::CTraceView(bool bStandAlone, QWidget* parent) : QWidget(parent)
 	m_pTrace->m_pAutoScroll->setChecked(theConf->GetBool("Options/TraceAutoScroll"));
 	m_pTrace->GetMenu()->insertAction(m_pTrace->GetMenu()->actions()[0], m_pTrace->m_pAutoScroll);
 
+	QWidget* pTraceViewport = m_pTrace->m_pTreeList->viewport();
+	m_pResumeAutoScroll = new QToolButton(pTraceViewport);
+	m_pResumeAutoScroll->setIcon(CSandMan::GetIcon("Down"));
+	m_pResumeAutoScroll->setText(tr("Resume Auto Scroll"));
+	m_pResumeAutoScroll->setToolTip(tr("Auto scrolling is paused. Click to resume."));
+	m_pResumeAutoScroll->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+	m_pResumeAutoScroll->setFocusPolicy(Qt::NoFocus);
+	m_pResumeAutoScroll->adjustSize();
+	m_pResumeAutoScroll->hide();
+	pTraceViewport->installEventFilter(this);
+
+	QScrollBar* pTraceScrollBar = m_pTrace->m_pTreeList->verticalScrollBar();
+	connect(m_pTrace->m_pAutoScroll, &QAction::toggled, this, [this](bool bEnabled) {
+		if (bEnabled)
+			m_pTrace->m_pTreeList->scrollToBottom();
+		UpdateAutoScrollIndicator();
+	});
+	connect(m_pResumeAutoScroll, &QToolButton::clicked, this, [this]() {
+		m_pTrace->m_pTreeList->scrollToBottom();
+		UpdateAutoScrollIndicator();
+	});
+	connect(pTraceScrollBar, &QScrollBar::valueChanged, this, [this](int) {
+		UpdateAutoScrollIndicator();
+	});
+	connect(pTraceScrollBar, &QScrollBar::rangeChanged, this, [this](int, int) {
+		UpdateAutoScrollIndicator();
+	});
+	UpdateAutoScrollIndicator();
+
 	if (bStandAlone) {
-		QAction* pAction = new QAction(tr("Cleanup Trace Log"));
+		m_pTraceToolBar->addSeparator();
+		QAction* pAction = new QAction(CSandMan::GetIcon("Clean"), tr("Cleanup Trace Log"), this);
 		connect(pAction, SIGNAL(triggered()), this, SLOT(Clear()));
+		m_pTraceToolBar->addAction(pAction);
 		m_pTrace->GetMenu()->insertAction(m_pTrace->GetMenu()->actions()[1], pAction);
 	}
 
@@ -369,6 +406,43 @@ void CTraceView::timerEvent(QTimerEvent* pEvent)
 	Refresh();
 }
 
+bool CTraceView::eventFilter(QObject* source, QEvent* event)
+{
+	if (source == m_pTrace->m_pTreeList->viewport()
+		&& (event->type() == QEvent::Resize || event->type() == QEvent::Show))
+		PositionAutoScrollIndicator();
+
+	return QWidget::eventFilter(source, event);
+}
+
+bool CTraceView::IsTraceAtBottom() const
+{
+	QScrollBar* pScrollBar = m_pTrace->m_pTreeList->verticalScrollBar();
+	return pScrollBar->value() == pScrollBar->maximum();
+}
+
+void CTraceView::PositionAutoScrollIndicator()
+{
+	QWidget* pViewport = m_pTrace->m_pTreeList->viewport();
+	const int iMargin = 8;
+	const int x = qMax(0, pViewport->width() - m_pResumeAutoScroll->width() - iMargin);
+	const int y = qMax(0, pViewport->height() - m_pResumeAutoScroll->height() - iMargin);
+	m_pResumeAutoScroll->move(x, y);
+	m_pResumeAutoScroll->raise();
+}
+
+void CTraceView::UpdateAutoScrollIndicator()
+{
+	bool bPaused = !m_pMonitorMode->isChecked()
+		&& m_pTrace->m_pAutoScroll->isChecked()
+		&& !IsTraceAtBottom();
+	if (bPaused) {
+		PositionAutoScrollIndicator();
+		m_pResumeAutoScroll->show();
+	} else
+		m_pResumeAutoScroll->hide();
+}
+
 void CTraceView::SetEnabled(bool bSet)
 {
 	setEnabled(bSet);
@@ -378,14 +452,21 @@ void CTraceView::SetEnabled(bool bSet)
 
 void CTraceView::OnShowStack()
 {
-	if (m_pShowStack->isChecked() && !theGUI->GetAddonManager()->GetAddon("DbgHelp", CAddonManager::eInstalled).isNull())
-        theGUI->GetAddonManager()->TryInstallAddon("DbgHelp", this, tr("To use the stack traces feature the DbgHelp.dll and SymSrv.dll are required, do you want to download and install them?"));
+	if (m_pShowStack->isChecked()) {
+		theGUI->GetAddonManager()->GetAddons();
+		if (theGUI->GetAddonManager()->GetAddon("DbgHelp", CAddonManager::eInstalled).isNull())
+			theGUI->GetAddonManager()->TryInstallAddon("DbgHelp", this, tr("To use the stack traces feature the DbgHelp.dll and SymSrv.dll are required, do you want to download and install them?"));
+	}
 	theAPI->GetGlobalSettings()->SetBool("MonitorStackTrace", m_pShowStack->isChecked());
 	m_pTrace->m_pStackView->setVisible(m_pShowStack->isChecked());
 }
 
 void CTraceView::Refresh()
 {
+	QScrollBar* pTraceScrollBar = m_pTrace->m_pTreeList->verticalScrollBar();
+	const bool bFollowTraceTail = m_pTrace->m_pAutoScroll->isChecked()
+		&& IsTraceAtBottom() && !pTraceScrollBar->isSliderDown();
+
 	QList<CSandBoxPtr>Boxes;
 	if(m_pAllBoxes && !m_pAllBoxes->isChecked())
 		Boxes = theGUI->GetBoxView()->GetSelectedBoxes();
@@ -396,6 +477,12 @@ void CTraceView::Refresh()
 	}
 
 	bool bMonitorMode = m_pMonitorMode->isChecked();
+	const QVector<CTraceEntryPtr> &ResourceLog = theAPI->GetTrace();
+
+	if (ResourceLog.count() < m_LastCount)
+		m_FullRefresh = true;
+	else if (m_LastCount > 0 && m_LastID != ResourceLog.at(m_LastCount - 1)->GetUID())
+		m_FullRefresh = true;
 
 	if (m_FullRefresh) 
 	{
@@ -410,8 +497,6 @@ void CTraceView::Refresh()
 		m_pMonitor->m_pMonitorModel->Clear();
 		m_FullRefresh = false;
 	}
-
-	const QVector<CTraceEntryPtr> &ResourceLog = theAPI->GetTrace();
 
 	bool bUpdateFilters = false;
 
@@ -455,7 +540,8 @@ void CTraceView::Refresh()
 		if (m_pCurrentBox != NULL && m_pCurrentBox != pEntry->GetBoxPtr())
 			continue;
 
-		if (m_FilterPid != 0 && m_FilterPid != pEntry->GetProcessId())
+		quint32 pid = pEntry->GetProcessId();
+		if (!((m_ShowPids.isEmpty() || m_ShowPids.contains(pid)) && !m_HidePids.contains(pid)))
 			continue;
 
 		if (m_FilterTid != 0 && m_FilterTid != pEntry->GetThreadId())
@@ -466,9 +552,11 @@ void CTraceView::Refresh()
 
 		if (bMonitorMode)
 		{
-			CMonitorEntryPtr& pItem = m_MonitorMap[pEntry->GetName().toLower()];
+			QString Name = pEntry->GetName();
+			if (Name.isEmpty())
+				Name = pEntry->GetMessage();
+			CMonitorEntryPtr& pItem = m_MonitorMap[Name.toLower()];
 			if (pItem.data() == NULL) {
-				QString Name = pEntry->GetName();
 				//if (Name.left(9).compare("\\REGISTRY", Qt::CaseInsensitive) == 0) {
 				//	int pos = Name.indexOf("\\", 10);
 				//	Name = Name.left(pos).toUpper() + Name.mid(pos);
@@ -545,22 +633,30 @@ void CTraceView::Refresh()
 		if (m_pTrace->m_pTraceModel->IsTree())
 		{
 			QTimer::singleShot(10, this, [this, NewBranches]() {
+				QScrollBar* pScrollBar = m_pTrace->m_pTreeList->verticalScrollBar();
+				const bool bFollowTraceTail = m_pTrace->m_pAutoScroll->isChecked()
+					&& IsTraceAtBottom() && !pScrollBar->isSliderDown();
 				quint64 start = GetCurCycle();
 				foreach(const QModelIndex& Index, NewBranches)
 					m_pTrace->GetTree()->expand(Index);
+				if (bFollowTraceTail)
+					m_pTrace->m_pTreeList->scrollToBottom();
+				UpdateAutoScrollIndicator();
 				qDebug() << "Expand took" << (GetCurCycle() - start) / 1000000.0 << "s";
 			});
 		}
 
-		if(m_pTrace->m_pAutoScroll->isChecked())
+		if (bFollowTraceTail)
 			m_pTrace->m_pTreeList->scrollToBottom();
+		UpdateAutoScrollIndicator();
 	}
 }
 
 void CTraceView::Clear()
 {
 	m_pTracePid->clear();
-	m_pTracePid->addItem(tr("[All]"), 0);
+	m_ShowPids.clear();
+	m_HidePids.clear();
 
 	m_pTraceTid->clear();
 	m_pTraceTid->addItem(tr("[All]"), 0);
@@ -606,6 +702,7 @@ void CTraceView::OnSetMode()
 
 	m_FullRefresh = true;
 	Refresh();
+	UpdateAutoScrollIndicator();
 
 	theConf->SetValue("Options/UseMonitorMode", m_pMonitorMode->isChecked());
 }
@@ -623,20 +720,30 @@ void CTraceView::OnObjTree()
 	theConf->SetValue("Options/UseObjectTree", m_pObjectTree->isChecked());
 }
 
+void CTraceView::SelectProcess(quint64 PID)
+{
+	int Index = m_pTracePid->findData(PID);
+	m_pTracePid->setItemCheckState(Index, m_pTracePid->itemCheckState(Index) == Qt::Checked ? Qt::Unchecked : Qt::Checked);
+}
+
 void CTraceView::UpdateFilters()
 {
 	m_bUpdatePending = false;
-
-	quint32 cur_pid = m_pTracePid->currentData().toUInt();
 
 	QMap<quint32, SProgInfo> pids = m_PidMap;
 	foreach(quint32 pid, pids.keys()) {
 		SProgInfo& Info = pids[pid];
 
-		if(m_pTracePid->findData(pid) == -1)
+		if (m_pTracePid->findData(pid) == -1) {
 			m_pTracePid->addItem(tr("%1 (%2)").arg(Info.Name).arg(pid), pid);
+			QStandardItemModel *model = qobject_cast<QStandardItemModel *>(m_pTracePid->model());
+			QStandardItem *item = model->item(m_pTracePid->count()-1);
+			item->setCheckable(true);
+			item->setCheckState(Qt::Unchecked); // Set default state
+			item->setFlags(item->flags() | Qt::ItemIsUserTristate); // Enable tri-state
+		}
 
-		if (cur_pid != 0 && cur_pid != pid)
+		if ((m_ShowPids.isEmpty() || m_ShowPids.contains(pid)) && !m_HidePids.contains(pid))
 			continue;
 
 		foreach(quint32 tid, Info.Threads) {
@@ -651,9 +758,23 @@ void CTraceView::OnFilterChanged()
 	m_FullRefresh = true;
 }
 
-void CTraceView::OnSetPidFilter()
+void CTraceView::OnSetPidFilter(QStandardItem* item)
 {
-	m_FilterPid = m_pTracePid->currentData().toUInt();
+	switch (item->checkState()) {
+	case Qt::Checked:
+		m_ShowPids.insert(item->data(Qt::UserRole).toUInt());
+		m_HidePids.remove(item->data(Qt::UserRole).toUInt());
+		break;
+	case Qt::PartiallyChecked:
+		m_ShowPids.remove(item->data(Qt::UserRole).toUInt());
+		m_HidePids.insert(item->data(Qt::UserRole).toUInt());
+		break;
+	case Qt::Unchecked:
+		m_ShowPids.remove(item->data(Qt::UserRole).toUInt());
+		m_HidePids.remove(item->data(Qt::UserRole).toUInt());
+		break;
+	}
+	
 	m_FilterTid = 0;
 	//m_pSortProxy->m_FilterPid = m_pTracePid->currentData().toUInt();
 	//m_pSortProxy->m_FilterTid = 0;
@@ -785,7 +906,7 @@ bool CTraceView::SaveToFile(QIODevice* pFile)
 // CTraceWindow
 
 CTraceWindow::CTraceWindow(QWidget *parent)
-	: QDialog(parent)
+	: QDialog(parent), m_bPromptOnClose(true)
 {
 	Qt::WindowFlags flags = windowFlags();
 	flags |= Qt::CustomizeWindowHint;
@@ -813,12 +934,40 @@ CTraceWindow::CTraceWindow(QWidget *parent)
 CTraceWindow::~CTraceWindow()
 {
 	theConf->SetBlob("TraceWindow/Window_Geometry", saveGeometry());
+}
 
-	if(!theAPI) theAPI->EnableMonitor(false);
+void CTraceWindow::CloseWithoutPrompt()
+{
+	m_bPromptOnClose = false;
+	close();
 }
 
 void CTraceWindow::closeEvent(QCloseEvent *e)
 {
+	if (m_bPromptOnClose && theAPI && theConf->GetInt("Options/ViewMode", 1) != 1 &&
+		theAPI->IsMonitoring())
+	{
+		QMessageBox MessageBox(QMessageBox::Question, "Sandboxie-Plus",
+			tr("Trace Logging is still active. What do you want to do?"),
+			QMessageBox::NoButton, this);
+		QPushButton* pStopAndClear = MessageBox.addButton(
+			tr("Stop and Clear"), QMessageBox::AcceptRole);
+		QPushButton* pDisableKeepLogs = MessageBox.addButton(
+			tr("Disable, Keep Logs"), QMessageBox::ActionRole);
+		QPushButton* pKeepLogging = MessageBox.addButton(
+			tr("Keep Logging"), QMessageBox::RejectRole);
+		MessageBox.setDefaultButton(pKeepLogging);
+		MessageBox.exec();
+
+		if (MessageBox.clickedButton() == pStopAndClear)
+		{
+			if (!theAPI->EnableMonitor(false).IsError())
+				theAPI->ClearTrace();
+		}
+		else if (MessageBox.clickedButton() == pDisableKeepLogs)
+			theAPI->EnableMonitor(false);
+	}
+
 	emit Closed();
 	this->deleteLater();
 }

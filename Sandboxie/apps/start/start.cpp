@@ -31,6 +31,10 @@
 #include "core/drv/api_defs.h"
 #include <psapi.h>
 #include <Shlwapi.h>
+#include <new>
+#include <set>
+#include <string>
+#include "common/SecDeskHelper.h"
 
 
 //---------------------------------------------------------------------------
@@ -55,6 +59,30 @@ int Terminate_All_Processes(BOOL all_boxes);
 int Unmount_All_Boxes(BOOL all_boxes);
 int Delete_All_Sandboxes();
 
+const WCHAR* GetBoxDisplayName(const WCHAR* boxName, WCHAR* buffer,
+    SIZE_T bufferChars, BOOL compact)
+{
+    ULONG mode = SbieApi_QueryConfNumber(
+        L"GlobalSettings", L"BoxAliasDisplayMode", 0);
+    WCHAR alias[MAX_PATH];
+
+    if (mode > 2)
+        mode = 0;
+    if (!boxName || !buffer || bufferChars == 0)
+        return boxName;
+    if (mode == 1 || !NT_SUCCESS(SbieApi_QueryConfAsIs(
+            boxName, L"BoxAlias", 0, alias, sizeof(alias))) || !*alias) {
+        wcsncpy_s(buffer, bufferChars, boxName, _TRUNCATE);
+    }
+    else if (mode == 2 && !compact && _wcsicmp(alias, boxName) != 0) {
+        swprintf_s(buffer, bufferChars, L"%s (%s)", alias, boxName);
+    }
+    else {
+        wcsncpy_s(buffer, bufferChars, alias, _TRUNCATE);
+    }
+    return buffer;
+}
+
 extern WCHAR *DoRunDialog(HINSTANCE hInstance);
 extern WCHAR *DoBoxDialog(void);
 extern bool DoAboutDialog(bool bReminder = false);
@@ -63,6 +91,7 @@ extern WCHAR *DoStartMenu(void);
 extern BOOL WriteStartMenuResult(const WCHAR *MapName, const WCHAR *Command);
 extern void DeleteSandbox(
     const WCHAR *BoxName, BOOL bLogoff, BOOL bSilent, int phase);
+int SecureDialogFunc(HWND hWnd, void* param);
 
 
 extern "C" {
@@ -84,12 +113,14 @@ WCHAR BoxName[BOXNAME_COUNT];
 WCHAR BoxKey[128+1];
 
 PWSTR ChildCmdLine = NULL;
+PWSTR ChildWrkDir = NULL;
 BOOL run_mail_agent = FALSE;
 BOOL display_run_dialog = FALSE;
 int display_start_menu = 0;
 BOOL execute_auto_run = FALSE;
 BOOL execute_open_with = FALSE;
 BOOL run_elevated_2 = FALSE;
+BOOL fake_admin = FALSE;
 BOOL disable_force_on_this_program = FALSE;
 BOOL force_children_on_this_program = FALSE;
 BOOL auto_select_default_box = FALSE;
@@ -445,6 +476,8 @@ BOOL Parse_Command_Line(void)
                 ULONG len = ULONG(tmp - cmd) * sizeof(WCHAR);
                 memcpy((WCHAR*)&buffer[req.length], cmd, len);
                 req.length += len;
+                *((WCHAR*)&buffer[req.length]) = 0;
+                req.length += sizeof(WCHAR);
             }
 
             rpl = SbieDll_CallServer(&req);
@@ -708,6 +741,16 @@ BOOL Parse_Command_Line(void)
             cmd = Eat_String(cmd);
 
             run_elevated_2 = TRUE;
+
+        //
+        // Command line switch /fake_admin
+        //
+
+        } else if (_wcsnicmp(cmd, L"fake_admin", 10) == 0) {
+
+            cmd = Eat_String(cmd);
+
+            fake_admin = TRUE;
 
         //
         // Command line switch /disable_force or /dfp
@@ -980,6 +1023,39 @@ BOOL Parse_Command_Line(void)
     }
 
     //
+    // handle uac_prompt
+    //
+
+    else if (wcsncmp(cmd, L"uac_prompt", 10) == 0) {
+
+        cmd = Eat_String(cmd);
+
+        wchar_t szPath[MAX_PATH];
+        GetModuleFileNameW(NULL, szPath, ARRAYSIZE(szPath));
+        *wcsrchr(szPath, L'\\') = L'\0';
+        wcscat_s(szPath, MAX_PATH, L"\\SbieWallpaper.png");
+
+        /*while (! IsDebuggerPresent())
+            Sleep(500);
+        __debugbreak();*/
+
+        //
+        // Open Sandboxie's own UAC Dialog
+        // Note: When User Account Control (UAC) is configured to not use the secure desktop, sandboxie does the same.
+        //
+
+        int ret;
+//#ifndef WITH_DEBUG
+        if (SbieApi_QueryConfBool(NULL, L"PromptOnSecureDesktop", TRUE) && GetPromptOnSecureDesktop())
+            ret = ShowSecureDialog(SecureDialogFunc, cmd, szPath);
+        else
+//#endif
+            ret = SecureDialogFunc(NULL, cmd);
+
+        ExitProcess(ret);
+    }
+
+    //
     // otherwise pass the rest of the command line as-is to the child
     //
 
@@ -1006,6 +1082,649 @@ BOOL Parse_Command_Line(void)
     wcscpy(ChildCmdLine, cmd);
 
     return TRUE;
+}
+
+
+//---------------------------------------------------------------------------
+// UacGetParams
+//---------------------------------------------------------------------------
+
+const ULONG tzuk = 'xobs';
+
+typedef struct _SECURE_UAC_PACKET {
+
+    //
+    // keep in sync with SbieSvc.exe / ServiceServer2
+    //
+
+    ULONG   tzuk;
+    ULONG   len;
+    ULONG   app_len;
+    ULONG   app_ofs;
+    ULONG   cmd_len;
+    ULONG   cmd_ofs;
+    ULONG   dir_len;
+    ULONG   dir_ofs;
+    ULONG   inv_len;
+    ULONG64 hEvent;
+    ULONG64 hResult;
+    ULONG64 ret_code;
+    WCHAR   text[1];
+
+} SECURE_UAC_PACKET;
+
+void UacGetParams(
+    HANDLE idProcess, ULONG_PTR pkt_addr, ULONG pkt_len, WCHAR **app, WCHAR **cmd, WCHAR **dir)
+{
+    BOOL ok = TRUE;
+    HANDLE hProcess = NULL;
+    SECURE_UAC_PACKET *pkt = NULL;
+    SIZE_T copy_len;
+
+    //
+    // open client process
+    //
+
+    if (ok) {
+        hProcess = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE |
+                                PROCESS_VM_OPERATION | PROCESS_DUP_HANDLE,
+                                FALSE, (ULONG)(ULONG_PTR)idProcess);
+        if (! hProcess)
+            ok = FALSE;
+    }
+
+    //
+    // get and validate request packet
+    //
+
+    if (ok) {
+        pkt = (SECURE_UAC_PACKET *)HeapAlloc(GetProcessHeap(), 0, pkt_len);
+        if (! pkt) {
+            ok = FALSE;
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        }
+    }
+
+    if (ok) {
+        ok = ReadProcessMemory(hProcess, (void *)(ULONG_PTR)pkt_addr, pkt,
+                               pkt_len, &copy_len);
+        if (ok && (copy_len  != pkt_len ||
+                   pkt->tzuk != tzuk ||
+                   pkt->len  != pkt_len ||
+                   pkt_len   != ~pkt->inv_len)) {
+
+            ok = FALSE;
+            SetLastError(ERROR_INVALID_DATA);
+        }
+    }
+
+    //
+    // execute request and copy results back to caller
+    //
+
+    if (ok) {
+
+        if (app && pkt->app_len < 1024) {
+            *app = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, (pkt->app_len + 1) * sizeof(WCHAR));
+            if (*app) {
+                wmemcpy(*app, (WCHAR*)((UCHAR*)pkt + pkt->app_ofs), pkt->app_len);
+                (*app)[pkt->app_len] = L'\0';
+            }
+        }
+
+        if (cmd && pkt->cmd_len < 1024) {
+            *cmd = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, (pkt->cmd_len + 1) * sizeof(WCHAR));
+            if (*cmd) {
+                wmemcpy(*cmd, (WCHAR*)((UCHAR*)pkt + pkt->cmd_ofs), pkt->cmd_len);
+                (*cmd)[pkt->cmd_len] = L'\0';
+            }
+        }
+        
+        if (dir && pkt->dir_len < 1024) {
+            *dir = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, (pkt->dir_len + 1) * sizeof(WCHAR));
+            if (*dir) {
+                wmemcpy(*dir, (WCHAR*)((UCHAR*)pkt + pkt->dir_ofs), pkt->dir_len);
+                (*dir)[pkt->dir_len] = L'\0';
+            }
+        }
+    }
+
+    if (hProcess)
+        CloseHandle(hProcess);
+
+    if (pkt)
+        HeapFree(GetProcessHeap(), 0, pkt);
+}
+
+
+//---------------------------------------------------------------------------
+// TruncatePathMiddle
+//---------------------------------------------------------------------------
+
+
+void TruncatePathMiddle(const wchar_t* fullPath, wchar_t* outPath, size_t maxLen)
+{
+    if (!fullPath || !outPath || maxLen < 5) {
+        if (outPath && maxLen > 0)
+            outPath[0] = L'\0';
+        return;
+    }
+
+    size_t fullLen = wcslen(fullPath);
+    if (fullLen < maxLen) {
+        wcsncpy(outPath, fullPath, maxLen);
+        outPath[maxLen - 1] = L'\0';
+        return;
+    }
+
+    // Find filename
+    const wchar_t* filename = wcsrchr(fullPath, L'\\');
+    filename = filename ? filename + 1 : fullPath;
+    size_t fileLen = wcslen(filename);
+
+    if (fileLen + 4 >= maxLen) {
+        // Can't even fit filename
+        wcsncpy(outPath, L"...", maxLen);
+        wcsncat(outPath, filename + (fileLen - (maxLen - 4)), maxLen - 4);
+        outPath[maxLen - 1] = L'\0';
+        return;
+    }
+
+    // Allocate space for "..." and filename
+    size_t remaining = maxLen - fileLen - 4;
+
+    // Find folder split points
+    const wchar_t* pathEnd = filename - 1;
+    size_t prefixLen = 0;
+    const wchar_t* prefixEnd = fullPath;
+
+    while (*prefixEnd && prefixEnd < pathEnd) {
+        if (*prefixEnd == L'\\')
+            ++prefixLen;
+        ++prefixEnd;
+    }
+
+    size_t suffixLen = 0;
+    const wchar_t* suffixStart = pathEnd;
+    while (suffixStart > fullPath && suffixLen < prefixLen) {
+        if (*suffixStart == L'\\')
+            ++suffixLen;
+        --suffixStart;
+    }
+
+    // Now walk forward from start
+    const wchar_t* prefixWalk = fullPath;
+    size_t used = 0;
+    wchar_t prefix[260] = L"";
+    while (prefixWalk < pathEnd && used < remaining / 2) {
+        const wchar_t* next = wcschr(prefixWalk, L'\\');
+        if (!next || next >= pathEnd)
+            break;
+
+        size_t len = next - prefixWalk + 1;
+        if (used + len >= remaining / 2)
+            break;
+
+        wcsncat(prefix, prefixWalk, len);
+        used += len;
+        prefixWalk = next + 1;
+    }
+
+    // Now walk backward from suffixStart
+    const wchar_t* suffixWalk = pathEnd;
+    wchar_t suffix[260] = L"";
+    used = 0;
+
+    while (suffixWalk > fullPath && used < remaining / 2) {
+        const wchar_t* prev = suffixWalk;
+        while (prev > fullPath && *(prev - 1) != L'\\')
+            --prev;
+
+        size_t len = suffixWalk - prev + 1;
+        if (used + len >= remaining / 2)
+            break;
+
+        wchar_t tmp[260] = L"";
+        wcsncat(tmp, prev, len);
+        wcscat(tmp, suffix);
+        wcscpy(suffix, tmp);
+
+        used += len;
+        if (prev == fullPath)
+            break;
+        suffixWalk = prev - 1;
+    }
+
+    // Build final string: prefix + "..." + suffix + filename
+    wcsncpy(outPath, prefix, maxLen);
+    wcscat(outPath, L"...");
+    if (suffix[0] != L'\0') {
+        wcsncat(outPath, suffix, maxLen - wcslen(outPath) - 1);
+    } else if (outPath[wcslen(outPath) - 1] != L'\\') {
+        // No suffix preserved, but we want "\filename"
+        wcsncat(outPath, L"\\", maxLen - wcslen(outPath) - 1);
+    }
+    wcsncat(outPath, filename, maxLen - wcslen(outPath) - 1);
+    outPath[maxLen - 1] = L'\0';
+}
+
+
+//---------------------------------------------------------------------------
+// DrawTextWithFont
+//---------------------------------------------------------------------------
+
+
+int DrawTextWithFont(
+    HDC hdc, int y, const WCHAR* txt, int width, HFONT hFont, COLORREF color, DWORD flags = DT_WORDBREAK)
+{
+    HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
+    SetTextColor(hdc, color);
+
+    RECT rc = { 10, y, 10 + width, y + 4096 };
+    // Get height
+    DrawTextW(hdc, txt, -1, &rc, flags | DT_CALCRECT);
+    // Actually draw
+    DrawTextW(hdc, txt, -1, &rc, flags);
+    SelectObject(hdc, hOldFont);
+    return rc.bottom;
+}
+
+
+//---------------------------------------------------------------------------
+// MeasureTextHeight
+//---------------------------------------------------------------------------
+
+
+int MeasureTextHeight(HDC hdc, const WCHAR* txt, int width, HFONT hFont, DWORD flags)
+{
+    HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
+    RECT rc = { 10, 0, 10 + width, 4096 };
+    DrawTextW(hdc, txt, -1, &rc, flags | DT_CALCRECT);
+    SelectObject(hdc, hOldFont);
+    return rc.bottom;
+}
+
+
+//---------------------------------------------------------------------------
+// UacPromptWndProc
+//---------------------------------------------------------------------------
+
+#define IDS_CANCEL 801
+#define IDS_YES    805
+#define IDS_NO     806
+
+struct SDialogParams
+{
+    HANDLE          idProcess;
+    ULARGE_INTEGER  pkt_addr;
+    ULONG           pkt_len;
+    int             ButtonY;
+    HWND            hYes;
+    HWND            hNo;
+    HWND            hCancel;
+    WCHAR           BoxName[BOXNAME_COUNT];
+    WCHAR           ExeName[99];
+    WCHAR           AppName[99];
+    int             DialogResult;
+	HFONT           hFontButtonText;
+};
+
+LRESULT UacPromptWndProc(
+    HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    SDialogParams* pParams = (SDialogParams*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+
+    switch (msg)
+    {
+    case WM_CREATE: {
+
+        /*while (! IsDebuggerPresent())
+            Sleep(500);
+        __debugbreak();*/
+
+        LPCREATESTRUCT pcs = (LPCREATESTRUCT)lParam;
+        pParams = (SDialogParams*)pcs->lpCreateParams;
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)pParams);
+
+        SbieApi_QueryProcess(pParams->idProcess, pParams->BoxName, pParams->ExeName, NULL, NULL);
+
+        if (pParams->pkt_len) {
+
+            WCHAR* AppName;
+            UacGetParams(pParams->idProcess, (ULONG_PTR)pParams->pkt_addr.QuadPart, pParams->pkt_len, &AppName, NULL, NULL);
+            if (AppName) {
+
+                if (memcmp(AppName, L"*MSI*", 5 * sizeof(WCHAR)) == 0)
+                    wcscpy(pParams->AppName, L"Windows Installer");
+                else
+                    TruncatePathMiddle(AppName, pParams->AppName, 70);
+
+                HeapFree(GetProcessHeap(), 0, AppName);
+            }
+        }
+
+        //
+        // Create Yes/No/Cancel buttons
+        //
+
+		HDC hdc = GetDC(hwnd);
+		const int dpiX = GetDeviceCaps(hdc, LOGPIXELSX);
+		const int dpiY = GetDeviceCaps(hdc, LOGPIXELSY);
+		ReleaseDC(hwnd, hdc);
+
+		const int buttonWidth = MulDiv(100, dpiX, 96);
+		const int buttonHeight = MulDiv(30, dpiY, 96);
+		const int buttonGapWidth = MulDiv(110, dpiX, 96);
+        pParams->ButtonY = MulDiv(300, dpiY, 96);
+
+		// Create a font for the button text.
+		// This font has to be preserved until the window is destroyed.
+		int heightButtonText = MulDiv(12, dpiY, 72);
+		pParams->hFontButtonText = CreateFont(-heightButtonText, 0, 0, 0,
+			FW_NORMAL, FALSE, FALSE, FALSE, ANSI_CHARSET,
+			OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+			DEFAULT_QUALITY, DEFAULT_PITCH,
+			L"Arial");
+
+        //WCHAR bufYes[32], bufNo[32], bufCancel[32];
+        //LoadStringW(GetModuleHandleW(L"user32.dll"), IDS_YES,    bufYes,    32);
+        //LoadStringW(GetModuleHandleW(L"user32.dll"), IDS_NO,     bufNo,     32);
+        //LoadStringW(GetModuleHandleW(L"user32.dll"), IDS_CANCEL, bufCancel, 32);
+
+		int buttonX = MulDiv(140, dpiX, 96);
+        WCHAR* pMsg = SbieDll_FormatMessage0(MSG_3115);
+        pParams->hYes = CreateWindowW(L"BUTTON", pMsg,
+            WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+            buttonX, pParams->ButtonY, buttonWidth, buttonHeight, hwnd, (HMENU)IDYES,
+            GetModuleHandle(NULL), NULL);
+        LocalFree(pMsg);
+		SendMessageW(pParams->hYes, WM_SETFONT, (WPARAM)pParams->hFontButtonText, TRUE);
+		buttonX += buttonGapWidth;
+
+        pMsg = SbieDll_FormatMessage0(MSG_3116);
+        pParams->hNo = CreateWindowW(L"BUTTON", pMsg,
+            WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_DEFPUSHBUTTON,
+            buttonX, pParams->ButtonY, buttonWidth, buttonHeight, hwnd, (HMENU)IDNO,
+            GetModuleHandle(NULL), NULL);
+        LocalFree(pMsg);
+		SendMessageW(pParams->hNo, WM_SETFONT, (WPARAM)pParams->hFontButtonText, TRUE);
+		buttonX += buttonGapWidth;
+
+        pMsg = SbieDll_FormatMessage0(MSG_3117);
+        pParams->hCancel = CreateWindowW(L"BUTTON", pMsg,
+            WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+            buttonX, pParams->ButtonY, buttonWidth, buttonHeight, hwnd, (HMENU)IDCANCEL,
+            GetModuleHandle(NULL), NULL);
+        LocalFree(pMsg);
+		SendMessageW(pParams->hCancel, WM_SETFONT, (WPARAM)pParams->hFontButtonText, TRUE);
+
+        SetFocus(pParams->hNo);
+
+        return 0;
+    }
+
+    case WM_SETCURSOR:
+        SetCursor(LoadCursor(NULL, IDC_ARROW));
+        return 0;
+
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        return 0;
+
+    case WM_COMMAND:
+        switch (LOWORD(wParam)) {
+        case IDYES:
+        case IDNO:
+        case IDCANCEL:
+            if (pParams) pParams->DialogResult = LOWORD(wParam);
+            DestroyWindow(hwnd);
+            break;
+        }
+        return 0;
+
+    case WM_DESTROY:
+		DeleteObject(pParams->hFontButtonText);
+        PostQuitMessage(0);
+        return 0;
+
+    case WM_PAINT: {
+
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+
+		const int dpiX = GetDeviceCaps(hdc, LOGPIXELSX);
+		const int dpiY = GetDeviceCaps(hdc, LOGPIXELSY);
+
+        RECT clientRect;
+        GetClientRect(hwnd, &clientRect);
+        int width = clientRect.right - MulDiv(20, dpiX, 96);
+
+        // Prepare fonts
+        int heightTitle = MulDiv(12, dpiY, 72);
+        HFONT hFontTitle = CreateFont(-heightTitle, 0, 0, 0,
+            FW_BOLD, FALSE, FALSE, FALSE, ANSI_CHARSET,
+            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            DEFAULT_QUALITY, DEFAULT_PITCH,
+            L"Arial");
+
+        int heightNormal = MulDiv(9, dpiY, 72);
+        HFONT hFontNormal = CreateFont(-heightNormal, 0, 0, 0,
+            FW_BOLD, FALSE, FALSE, FALSE, ANSI_CHARSET,
+            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            DEFAULT_QUALITY, DEFAULT_PITCH,
+            L"Arial");
+
+        SetBkColor(hdc, 0x00404040);
+
+        int y = MulDiv(10, dpiY, 96);
+        WCHAR* pMsg = SbieDll_FormatMessage2(3244, pParams->ExeName, pParams->BoxName);
+        y = DrawTextWithFont(hdc, y, pMsg, width, hFontTitle, 0x00FFFFFF);
+        LocalFree(pMsg);
+
+        //y += 20;
+        //pMsg = SbieDll_FormatMessage0(3742);
+        //y = DrawTextWithFont(hdc, y, pMsg, width, hFontTitle, 0x00FFFFFF, DT_SINGLELINE);
+        //LocalFree(pMsg);
+        y = DrawTextWithFont(hdc, y, pParams->BoxName, width, hFontTitle, 0x0080FFFF, DT_SINGLELINE);
+
+        if (*pParams->AppName) {
+            y += MulDiv(10, dpiY, 96);
+            pMsg = SbieDll_FormatMessage0(3743);
+            y = DrawTextWithFont(hdc, y, pMsg, width, hFontTitle, 0x00FFFFFF, DT_SINGLELINE);
+            LocalFree(pMsg);
+            y = DrawTextWithFont(hdc, y, pParams->AppName, width, hFontTitle, 0x0080FFFF, DT_SINGLELINE);
+        }
+
+        y += MulDiv(30, dpiY, 96);
+        pMsg = SbieDll_FormatMessage0(3245);
+        y = DrawTextWithFont(hdc, y, pMsg, width, hFontTitle, 0x00FFFFFF);
+        LocalFree(pMsg);
+
+        // Store for button placement, e.g.:
+        //pParams->ButtonY = y + 10;
+
+        // Now draw the last message aligned from the bottom
+        pMsg = SbieDll_FormatMessage0(3246);
+        y = clientRect.bottom - MeasureTextHeight(hdc, pMsg, width, hFontNormal, DT_WORDBREAK) - MulDiv(10, dpiY, 96);
+        DrawTextWithFont(hdc, y, pMsg, width, hFontNormal, 0x00AAAAAA);
+        LocalFree(pMsg);
+
+        DeleteObject(hFontTitle);
+        DeleteObject(hFontNormal);
+
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+
+    //case WM_SIZE:
+    //{
+    //    // Reposition buttons after resize/paint
+    //    if (pParams)
+    //    {
+    //        RECT clientRect;
+    //        GetClientRect(hwnd, &clientRect);
+    //        int width = clientRect.right - 20;
+
+    //        // Assume buttons are already created and stored somewhere (e.g., in pParams)
+    //        int btnY = pParams->ButtonY;
+    //        int btnW = 100, btnH = 30;
+    //        int spacing = 10;
+
+    //        // Center buttons as an example, or keep your layout
+    //        int totalWidth = btnW * 3 + spacing * 2;
+    //        int startX = (clientRect.right - totalWidth) / 2;
+
+    //        SetWindowPos(pParams->hYes, NULL, startX, btnY, btnW, btnH, SWP_NOZORDER | SWP_SHOWWINDOW);
+    //        SetWindowPos(pParams->hNo, NULL, startX + btnW + spacing, btnY, btnW, btnH, SWP_NOZORDER | SWP_SHOWWINDOW);
+    //        SetWindowPos(pParams->hCancel, NULL, startX + (btnW + spacing) * 2, btnY, btnW, btnH, SWP_NOZORDER | SWP_SHOWWINDOW);
+
+    //    }
+    //}
+
+    default:
+        return DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+}
+
+
+//---------------------------------------------------------------------------
+// SecureDialogFunc
+//---------------------------------------------------------------------------
+
+
+int SecureDialogFunc(HWND hWndParent, void* param)
+{
+    SDialogParams Params;
+    memset(&Params, 0, sizeof(Params));
+
+    WCHAR* ptr = (WCHAR*)param;
+    if (ptr) {
+        Params.idProcess = (HANDLE)(ULONG_PTR)wcstol(ptr, &ptr, 16);
+        if (*ptr == L'_') {
+            Params.pkt_addr.HighPart = wcstoul(ptr + 1, &ptr, 16);
+            if (*ptr == L'_') {
+                Params.pkt_addr.LowPart = wcstoul(ptr + 1, &ptr, 16);
+                if (*ptr == L'_')
+                    Params.pkt_len = wcstol(ptr + 1, &ptr, 16);
+            }
+        }
+    }
+
+    Params.DialogResult = IDCANCEL;
+
+    //
+    // get UAC shield icon
+    //
+
+    HICON hShieldIcon = NULL;
+    HICON hShieldIconSm = NULL;
+
+    if (1) {
+
+        typedef struct {
+            DWORD cbSize;
+            HICON hIcon;
+            int iSysImageIndex;
+            int iIcon;
+            WCHAR szPath[MAX_PATH];
+        } SHSTOCKICONINFO;
+        typedef HRESULT(*P_SHGetStockIconInfo)(
+            ULONG_PTR siid, UINT uFlags, SHSTOCKICONINFO* psii);
+        const ULONG SIID_SHIELD = 77;
+        const ULONG SHGSI_ICON = 0x000000100;
+        const ULONG SHGSI_SMALLICON = 0x000000001;
+
+        HMODULE hShell32 = LoadLibrary(L"shell32.dll");
+        if (hShell32) {
+
+            P_SHGetStockIconInfo pSHGetStockIconInfo = (P_SHGetStockIconInfo)
+                GetProcAddress(hShell32, "SHGetStockIconInfo");
+            if (pSHGetStockIconInfo) {
+
+                SHSTOCKICONINFO sii;
+                memzero(&sii, sizeof(SHSTOCKICONINFO));
+                sii.cbSize = sizeof(SHSTOCKICONINFO);
+                HRESULT hr = pSHGetStockIconInfo(
+                    SIID_SHIELD, SHGSI_ICON, &sii);
+                if (SUCCEEDED(hr))
+                    hShieldIcon = sii.hIcon;
+
+                hr = pSHGetStockIconInfo(SIID_SHIELD,
+                    SHGSI_ICON | SHGSI_SMALLICON, &sii);
+                if (SUCCEEDED(hr))
+                    hShieldIconSm = sii.hIcon;
+            }
+        }
+    }
+
+    //
+    // create window
+    //
+
+    WNDCLASSEX wc;
+    memzero(&wc, sizeof(WNDCLASSEX));
+    wc.cbSize = sizeof(WNDCLASSEX);
+    wc.style = 0; CS_NOCLOSE;
+    wc.lpfnWndProc = UacPromptWndProc;
+    wc.hInstance = GetModuleHandle(NULL);
+    wc.hbrBackground = CreateSolidBrush(0x00404040);
+    wc.lpszClassName = SANDBOXIE L"_UAC_WindowClass";
+    wc.hIcon = hShieldIcon;
+    wc.hIconSm = hShieldIconSm;
+    ATOM atom = RegisterClassEx(&wc);
+
+    BOOLEAN rtl;
+    SbieDll_GetLanguage(&rtl);
+
+	HDC hScreenDC = GetDC(NULL);
+
+    const int winWidth = MulDiv(600, GetDeviceCaps(hScreenDC, LOGPIXELSX), 96);
+    const int winHeight = MulDiv(500, GetDeviceCaps(hScreenDC, LOGPIXELSY), 96);
+	ReleaseDC(NULL, hScreenDC);
+
+    int screenX = (GetSystemMetrics(SM_CXSCREEN) - winWidth) / 2;
+    int screenY = (GetSystemMetrics(SM_CYSCREEN) - winHeight) / 2;
+
+    HWND hWnd = CreateWindowEx(WS_EX_TOPMOST |
+                               (rtl ? WS_EX_LAYOUTRTL : 0),
+                               (LPCWSTR)atom, SANDBOXIE,
+                               WS_SYSMENU | WS_MINIMIZEBOX,
+                               screenX, screenY, winWidth, winHeight,
+                               hWndParent, NULL, NULL, &Params);
+
+	// disable parent window so that the background window cannot be clicked and activated
+	BOOL isParentEnabled = IsWindowEnabled(hWndParent);
+	EnableWindow(hWndParent, FALSE);
+
+    ShowWindow(hWnd, SW_SHOW);
+
+    //
+    // do message loop
+    //
+
+    MSG msg;
+    while (GetMessageW(&msg, NULL, 0, 0) > 0) {
+        if (!IsDialogMessage(hWnd, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+    }
+
+    //
+    // Cleanup after window is closed
+    //
+
+	EnableWindow(hWndParent, isParentEnabled);
+    if (wc.hbrBackground)
+        DeleteObject(wc.hbrBackground);
+    if (hShieldIcon)
+        DestroyIcon(hShieldIcon);
+    if (hShieldIconSm) 
+        DestroyIcon(hShieldIconSm);
+    if (atom)
+        UnregisterClassW((LPCWSTR)atom, GetModuleHandle(NULL));
+
+    return Params.DialogResult;
 }
 
 
@@ -1144,14 +1863,19 @@ int Program_Start(void)
     // change to target directory
     //
 
-    curdir = (WCHAR *)MyHeapAlloc(1024 * sizeof(WCHAR));
-    if (GetEnvironmentVariable(
-                    L"00000000_" SBIE L"_CURRENT_DIRECTORY", curdir, 1020)) {
+    if (!ChildWrkDir) {
+        curdir = (WCHAR*)MyHeapAlloc(1024 * sizeof(WCHAR));
+        if (GetEnvironmentVariable(
+            L"00000000_" SBIE L"_CURRENT_DIRECTORY", curdir, 1020)) {
 
-        SetCurrentDirectory(curdir);
-        SetEnvironmentVariable(
-                    L"00000000_" SBIE L"_CURRENT_DIRECTORY", NULL);
+            ChildWrkDir = curdir;
+            SetEnvironmentVariable(
+                L"00000000_" SBIE L"_CURRENT_DIRECTORY", NULL);
+        }
     }
+
+    if(ChildWrkDir)
+        SetCurrentDirectory(ChildWrkDir);
 
     //
     // service programs expect to be started by CreateProcess, and may not
@@ -1399,11 +2123,14 @@ int Program_Start(void)
 
     if (! ok) {
 
+        keep_alive = FALSE; // disable keep alive when the process can't be started in the first place
+
+        if (run_elevated_2)
+            return err;
+
         WCHAR *errmsg = SbieDll_FormatMessage1(MSG_3205, cmdline);
         SetLastError(err);
         Show_Error(errmsg);
-
-        keep_alive = FALSE; // disable keep alive when the process can't be started in the first place
             
         return EXIT_FAILURE;
 
@@ -1440,7 +2167,7 @@ int Program_Start(void)
 //---------------------------------------------------------------------------
 
 
-void StartAutoRun(const WCHAR* Name, const WCHAR* Cmd)
+void StartAutoRun(const WCHAR* Cmd)
 {
     SbieDll_RunStartExe(Cmd, NULL);
 }
@@ -1463,13 +2190,11 @@ void StartAutoRunKey(LPCWSTR lpKey)
 	OBJECT_ATTRIBUTES ObjectAttributes;
     UNICODE_STRING RegistryPath;
 	HANDLE hKey = NULL;
-    const ULONG BufferSize = sizeof(KEY_VALUE_FULL_INFORMATION) + MAX_PATH;
-	PUCHAR Buffer[BufferSize];
-    PKEY_VALUE_FULL_INFORMATION valueInfo = (PKEY_VALUE_FULL_INFORMATION)Buffer;
+    ULONG BufferSize = sizeof(KEY_VALUE_FULL_INFORMATION) + MAX_PATH * sizeof(WCHAR);
+	PUCHAR Buffer;
+    PKEY_VALUE_FULL_INFORMATION valueInfo;
 	ULONG RequiredSize;
 	ULONG i = 0;
-	UNICODE_STRING Name;
-	UNICODE_STRING Data;
 	NTSTATUS Status;
 
     // Get the native unhooked function in order to enumerate only the sandboxed entries
@@ -1482,26 +2207,62 @@ void StartAutoRunKey(LPCWSTR lpKey)
 	if (!NT_SUCCESS(Status))
 		return;
 
+	Buffer = (PUCHAR)HeapAlloc(GetProcessHeap(), 0, BufferSize);
+    if (!Buffer) {
+        NtClose(hKey);
+        return;
+    }
+    valueInfo = (PKEY_VALUE_FULL_INFORMATION)Buffer;
+
 	while (TRUE) {
-		Status = __sys_NtEnumerateValueKey(hKey, i++, KeyValueFullInformation, valueInfo, sizeof(Buffer), &RequiredSize);
-		if (Status == STATUS_BUFFER_OVERFLOW)
+		Status = __sys_NtEnumerateValueKey(
+            hKey, i, KeyValueFullInformation, valueInfo, BufferSize, &RequiredSize);
+		if (Status == STATUS_BUFFER_OVERFLOW || Status == STATUS_BUFFER_TOO_SMALL) {
+			ULONG NewBufferSize = RequiredSize;
+            if (NewBufferSize <= BufferSize) {
+                if (BufferSize > (ULONG)-1 - 128)
+                    break;
+                NewBufferSize = BufferSize + 128;
+            }
+
+            PUCHAR NewBuffer = (PUCHAR)HeapAlloc(
+                GetProcessHeap(), 0, NewBufferSize);
+            if (!NewBuffer)
+                break;
+
+            HeapFree(GetProcessHeap(), 0, Buffer);
+            Buffer = NewBuffer;
+            BufferSize = NewBufferSize;
+            valueInfo = (PKEY_VALUE_FULL_INFORMATION)Buffer;
 			continue;
-		else if (!NT_SUCCESS(Status))
+		}
+		if (!NT_SUCCESS(Status))
 			break;
-		else if (valueInfo->Type != REG_SZ)
+
+        ++i;
+        if (valueInfo->Type != REG_SZ)
 			continue;
 
-		Name.Length = Name.MaximumLength = (USHORT)valueInfo->NameLength;
-		Name.Buffer = valueInfo->Name;
+        if (valueInfo->DataLength == 0 ||
+            (valueInfo->DataLength % sizeof(WCHAR)) != 0 ||
+            valueInfo->DataOffset > BufferSize ||
+            valueInfo->DataLength > BufferSize - valueInfo->DataOffset)
+            continue;
 
-		Data.Length = Data.MaximumLength = (USHORT)valueInfo->DataLength;
-		Data.Buffer = (PWCHAR)((ULONG_PTR)valueInfo + valueInfo->DataOffset);
-		if (Data.Length > sizeof(WCHAR) && Data.Buffer[Data.Length / sizeof(WCHAR) - 1] == UNICODE_NULL)
-			Data.Length -= sizeof(WCHAR);
+        ULONG dataLength = valueInfo->DataLength;
+        WCHAR* command = (WCHAR*)MyHeapAlloc(dataLength + sizeof(WCHAR));
+        if (!command)
+            continue;
 
-		StartAutoRun(Name.Buffer, Data.Buffer);
+        memcpy(command,
+               (const UCHAR*)valueInfo + valueInfo->DataOffset,
+               dataLength);
+        command[dataLength / sizeof(WCHAR)] = UNICODE_NULL;
+        StartAutoRun(command);
+        MyHeapFree(command);
 	}
 
+	HeapFree(GetProcessHeap(), 0, Buffer);
 	NtClose(hKey);
 }
 
@@ -1511,13 +2272,39 @@ void StartAutoRunKey(LPCWSTR lpKey)
 //---------------------------------------------------------------------------
 
 
-void StartLink(const WCHAR* Path, const WCHAR* Name)
+void StartLink(const WCHAR* Path, const WCHAR* Name, ULONG NameLength)
 {
+    if (!Path || !Name || !NameLength ||
+        (NameLength % sizeof(WCHAR)) != 0)
+        return;
+
+    const WCHAR* pathName = Path;
+    if (wcsncmp(pathName, L"\\??\\", 4) != 0)
+        return;
+    pathName += 4;
+
     WCHAR path[MAX_PATH];
-    wcscpy(path, Path + 4); // skip \??\ prefix
-    if (path[wcslen(path)] != L'\\')
-        wcscat(path, L"\\");
-    wcscat(path, Name);
+    size_t pathLength = wcslen(pathName);
+    if (!pathLength || pathLength >= ARRAYSIZE(path))
+        return;
+
+    wmemcpy(path, pathName, pathLength);
+    if (path[pathLength - 1] != L'\\') {
+        if (pathLength >= ARRAYSIZE(path) - 1)
+            return;
+        path[pathLength++] = L'\\';
+    }
+
+    size_t nameLength = NameLength / sizeof(WCHAR);
+    if (pathLength >= ARRAYSIZE(path))
+        return;
+    if (nameLength > ARRAYSIZE(path) - pathLength - 1)
+        return;
+
+    wmemcpy(path + pathLength, Name, nameLength);
+    pathLength += nameLength;
+    path[pathLength] = L'\0';
+
 
     /*WCHAR *ptr = wcsrchr(path, L'.');
     if (! ptr)
@@ -1538,7 +2325,7 @@ void StartLink(const WCHAR* Path, const WCHAR* Name)
     HRESULT hr = pShellLink->GetPath(buf, buflen / sizeof(WCHAR) - 1, NULL, 0);
     if (SUCCEEDED(hr)) {
 
-        StartAutoRun(Name, buf);
+        StartAutoRun(buf);
     }
 
     MyHeapFree(buf);
@@ -1546,7 +2333,12 @@ void StartLink(const WCHAR* Path, const WCHAR* Name)
     pPersistFile->Release();
     pShellLink->Release();*/
 
-    StartAutoRun(Name, path); // we can use the link directly
+    WCHAR commandLine[MAX_PATH + 3];
+    commandLine[0] = L'"';
+    wmemcpy(commandLine + 1, path, pathLength);
+    commandLine[pathLength + 1] = L'"';
+    commandLine[pathLength + 2] = L'\0';
+    StartAutoRun(commandLine); // we can use the link directly
 }
 
 
@@ -1557,23 +2349,53 @@ void StartLink(const WCHAR* Path, const WCHAR* Name)
 
 void StartAutoAutoFolder(LPCWSTR lpPath)
 {
-    WCHAR* OutTruePath;
-    WCHAR* OutCopyPath;
+    const ULONG BufferSize = 65536;
+    const ULONG FileNameOffset =
+        (ULONG)FIELD_OFFSET(FILE_ID_BOTH_DIR_INFORMATION, FileName);
+    WCHAR* OutTruePath = NULL;
+    WCHAR* OutCopyPath = NULL;
     UNICODE_STRING objname;
-    RtlInitUnicodeString(&objname, lpPath);
-    File_GetName(NULL, &objname, &OutTruePath, &OutCopyPath, NULL);
-
     UNICODE_STRING RootDirectoryName;
 	OBJECT_ATTRIBUTES RootDirectoryAttributes;
 	NTSTATUS ntStatus = STATUS_SUCCESS;
-	HANDLE RootDirectoryHandle;
+	HANDLE RootDirectoryHandle = NULL;
+    HANDLE Event = NULL;
 	IO_STATUS_BLOCK Iosb;
-	//HANDLE Event;
-    PFILE_ID_BOTH_DIR_INFORMATION DirInformation;
+    ULONG DirectoryDataLength = 0;
+    PFILE_ID_BOTH_DIR_INFORMATION DirectoryBuffer = NULL;
+    PFILE_ID_BOTH_DIR_INFORMATION DirInformation = NULL;
+    struct START_AUTO_RUN_NAME_LESS {
+        bool operator()(const std::wstring& Left,
+                        const std::wstring& Right) const
+        {
+            UNICODE_STRING LeftName;
+            UNICODE_STRING RightName;
+            LeftName.Length = LeftName.MaximumLength =
+                (USHORT)(Left.length() * sizeof(WCHAR));
+            LeftName.Buffer = (PWCHAR)Left.c_str();
+            RightName.Length = RightName.MaximumLength =
+                (USHORT)(Right.length() * sizeof(WCHAR));
+            RightName.Buffer = (PWCHAR)Right.c_str();
+            return RtlCompareUnicodeString(&LeftName, &RightName, TRUE) < 0;
+        }
+    };
+    std::set<std::wstring, START_AUTO_RUN_NAME_LESS> SeenEntries;
+    volatile ULONG_PTR RootDirectoryHandleAddress = 0;
+    volatile ULONG_PTR EventHandleAddress = 0;
+    volatile ULONG_PTR DirectoryBufferAddress = 0;
+    BOOLEAN restartScan;
 
     // Get the native unhooked function in order to enumerate only the sandboxed entries
     P_NtCreateFile __sys_NtCreateFile = (P_NtCreateFile)SbieDll_GetSysFunction(L"NtCreateFile");
     P_NtQueryDirectoryFile __sys_NtQueryDirectoryFile = (P_NtQueryDirectoryFile)SbieDll_GetSysFunction(L"NtQueryDirectoryFile");
+
+    if (!lpPath || !__sys_NtCreateFile || !__sys_NtQueryDirectoryFile)
+        goto cleanup;
+
+    RtlInitUnicodeString(&objname, lpPath);
+    ntStatus = File_GetName(NULL, &objname, &OutTruePath, &OutCopyPath, NULL);
+    if (!NT_SUCCESS(ntStatus) || !OutCopyPath)
+        goto cleanup;
 	
 	RtlInitUnicodeString(&RootDirectoryName, OutCopyPath);
 	InitializeObjectAttributes(&RootDirectoryAttributes, &RootDirectoryName, OBJ_CASE_INSENSITIVE, 0, 0);
@@ -1581,39 +2403,149 @@ void StartAutoAutoFolder(LPCWSTR lpPath)
 		GENERIC_READ, &RootDirectoryAttributes, &Iosb, 0, FILE_ATTRIBUTE_DIRECTORY,
 		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN, FILE_DIRECTORY_FILE, 0, 0);
 	if (!NT_SUCCESS(ntStatus))
-		return;
-	
-	//ntStatus = NtCreateEvent(&Event, GENERIC_ALL, 0, NotificationEvent, FALSE);
-	//if (!NT_SUCCESS(ntStatus))
-	//	return;
+		goto cleanup;
 
-    DirInformation = (PFILE_ID_BOTH_DIR_INFORMATION)MyHeapAlloc(65536);
+    RootDirectoryHandleAddress = (ULONG_PTR)RootDirectoryHandle;
+    Event = CreateEvent(NULL, TRUE, FALSE, NULL);
+    if (!Event)
+        goto cleanup;
+    EventHandleAddress = (ULONG_PTR)Event;
 
-	if (__sys_NtQueryDirectoryFile(RootDirectoryHandle, 0, //Event,
-		0, 0, &Iosb, DirInformation, 65536, FileIdBothDirectoryInformation, FALSE, NULL, FALSE) == STATUS_PENDING)
-	{
-		//ntStatus = NtWaitForSingleobject(Event, TRUE, 0);
-	}
-    if (NT_SUCCESS(ntStatus))
-    {
-        while (1)
-        {
-            UNICODE_STRING EntryName;
-            EntryName.MaximumLength = EntryName.Length = (USHORT)DirInformation->FileNameLength;
-            EntryName.Buffer = &DirInformation->FileName[0];
-            if ((DirInformation->FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
-            {
-                StartLink(lpPath, EntryName.Buffer);
-            }
-            if (0 == DirInformation->NextEntryOffset)
+    DirectoryBuffer = (PFILE_ID_BOTH_DIR_INFORMATION)MyHeapAlloc(BufferSize);
+    if (!DirectoryBuffer)
+        goto cleanup;
+    DirectoryBufferAddress = (ULONG_PTR)DirectoryBuffer;
+
+    restartScan = TRUE;
+    for (;;) {
+        if (!ResetEvent(Event)) {
+            ntStatus = STATUS_UNSUCCESSFUL;
+            break;
+        }
+
+	    ntStatus = __sys_NtQueryDirectoryFile(
+            (HANDLE)(ULONG_PTR)RootDirectoryHandleAddress,
+            (HANDLE)(ULONG_PTR)EventHandleAddress,
+		    0, 0, &Iosb, (PVOID)(ULONG_PTR)DirectoryBufferAddress, BufferSize,
+		    FileIdBothDirectoryInformation, FALSE, NULL, restartScan);
+        RootDirectoryHandle = (HANDLE)(ULONG_PTR)RootDirectoryHandleAddress;
+        Event = (HANDLE)(ULONG_PTR)EventHandleAddress;
+        DirectoryBuffer = (PFILE_ID_BOTH_DIR_INFORMATION)(ULONG_PTR)DirectoryBufferAddress;
+        restartScan = FALSE;
+
+        if (ntStatus == STATUS_PENDING) {
+            if (WaitForSingleObject(Event, INFINITE) != WAIT_OBJECT_0) {
+                ntStatus = STATUS_UNSUCCESSFUL;
                 break;
-            else
-                DirInformation = (PFILE_ID_BOTH_DIR_INFORMATION)(((PUCHAR)DirInformation) + DirInformation->NextEntryOffset);
+            }
+            ntStatus = Iosb.Status;
+            if (ntStatus == STATUS_PENDING)
+                break;
+        }
+
+        if (ntStatus == STATUS_NO_MORE_FILES)
+            break;
+        if (ntStatus != STATUS_SUCCESS && ntStatus != STATUS_BUFFER_OVERFLOW)
+            break;
+
+        if (Iosb.Information > BufferSize) {
+            ntStatus = STATUS_INFO_LENGTH_MISMATCH;
+            break;
+        }
+        DirectoryDataLength = (ULONG)Iosb.Information;
+        if (!DirectoryDataLength) {
+            ntStatus = STATUS_INFO_LENGTH_MISMATCH;
+            break;
+        }
+
+        BOOLEAN recordValid = TRUE;
+        DirInformation = DirectoryBuffer;
+        while (DirInformation) {
+            ULONG bufferOffset =
+                (ULONG)((PUCHAR)DirInformation - (PUCHAR)DirectoryBuffer);
+            if (bufferOffset >= DirectoryDataLength) {
+                recordValid = FALSE;
+                break;
+            }
+
+            ULONG bytesRemaining = DirectoryDataLength - bufferOffset;
+            if (bytesRemaining < FileNameOffset) {
+                recordValid = FALSE;
+                break;
+            }
+
+            ULONG fileNameLength = DirInformation->FileNameLength;
+            if ((fileNameLength % sizeof(WCHAR)) != 0 ||
+                fileNameLength > bytesRemaining - FileNameOffset) {
+                recordValid = FALSE;
+                break;
+            }
+
+            ULONG recordSize = FileNameOffset + fileNameLength;
+            ULONG nextEntryOffset = DirInformation->NextEntryOffset;
+            if (nextEntryOffset &&
+                ((nextEntryOffset % sizeof(ULONG)) != 0 ||
+                 nextEntryOffset < recordSize ||
+                 nextEntryOffset >= bytesRemaining)) {
+                recordValid = FALSE;
+                break;
+            }
+
+            if (!nextEntryOffset)
+                break;
+            DirInformation = (PFILE_ID_BOTH_DIR_INFORMATION)(
+                (PUCHAR)DirInformation + nextEntryOffset);
+        }
+
+        if (!recordValid) {
+            ntStatus = STATUS_INFO_LENGTH_MISMATCH;
+            break;
+        }
+
+        BOOLEAN madeProgress = FALSE;
+        DirInformation = DirectoryBuffer;
+        while (DirInformation) {
+            BOOLEAN isNewEntry;
+            try {
+                isNewEntry = SeenEntries.emplace(
+                    DirInformation->FileName,
+                    DirInformation->FileNameLength / sizeof(WCHAR)).second;
+            }
+            catch (const std::bad_alloc&) {
+                recordValid = FALSE;
+                break;
+            }
+
+            if (isNewEntry) {
+                madeProgress = TRUE;
+                if ((DirInformation->FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
+                    StartLink(lpPath, DirInformation->FileName,
+                              DirInformation->FileNameLength);
+            }
+
+            if (!DirInformation->NextEntryOffset)
+                break;
+            DirInformation = (PFILE_ID_BOTH_DIR_INFORMATION)(
+                (PUCHAR)DirInformation + DirInformation->NextEntryOffset);
+        }
+
+        if (!recordValid) {
+            ntStatus = STATUS_INSUFFICIENT_RESOURCES;
+            break;
+        }
+        if (!madeProgress) {
+            ntStatus = STATUS_NO_MORE_FILES;
+            break;
         }
     }
-    MyHeapFree(DirInformation);
 
-	NtClose(RootDirectoryHandle);
+cleanup:
+    if (Event)
+        CloseHandle(Event);
+    if (DirectoryBuffer)
+        MyHeapFree(DirectoryBuffer);
+	if (RootDirectoryHandle)
+		NtClose(RootDirectoryHandle);
 }
 
 
@@ -1642,12 +2574,12 @@ void StartAllAutoRunEntries()
     //HKLM\Software\Microsoft\Windows\CurrentVersion\RunServices
     //HKLM\Software\Microsoft\Windows\CurrentVersion\RunServicesOnce
 
-    StartAutoRunKey(L"\\REGISTRY\\User\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run");
-    StartAutoRunKey(L"\\REGISTRY\\User\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce");
-    //StartAutoRunKey(L"\\REGISTRY\\User\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnceEx");
-    StartAutoRunKey(L"\\REGISTRY\\User\\SOFTWARE\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Run");
-    StartAutoRunKey(L"\\REGISTRY\\User\\SOFTWARE\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\RunOnce");
-    //StartAutoRunKey(L"\\REGISTRY\\User\\SOFTWARE\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\RunOnceEx");
+    StartAutoRunKey(L"\\REGISTRY\\User\\Current\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run");
+    StartAutoRunKey(L"\\REGISTRY\\User\\Current\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce");
+    //StartAutoRunKey(L"\\REGISTRY\\User\\Current\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnceEx");
+    StartAutoRunKey(L"\\REGISTRY\\User\\Current\\SOFTWARE\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Run");
+    StartAutoRunKey(L"\\REGISTRY\\User\\Current\\SOFTWARE\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\RunOnce");
+    //StartAutoRunKey(L"\\REGISTRY\\User\\Current\\SOFTWARE\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\RunOnceEx");
     //HKCU\Software\Microsoft\Windows NT\CurrentVersion\Windows\Run
 
     //HKCU\Software\Microsoft\Windows\CurrentVersion\RunServices
@@ -1783,7 +2715,10 @@ ULONG RestartInSandbox(void)
     //
     //
 
-    ok = SbieDll_RunSandboxed(BoxName, cmd, dir, 0, &si, &pi);
+    ULONG crflags = 0;
+    if (fake_admin)
+        crflags |= CREATE_SECURE_PROCESS; // repurpose this flag for the fake admin as its not valid in a sandboxed context
+    ok = SbieDll_RunSandboxed(BoxName, cmd, dir, crflags, &si, &pi);
     err = GetLastError();
 
     if (! ok) {
@@ -1814,8 +2749,16 @@ ULONG RestartInSandbox(void)
         if (WaitForSingleObject(pi.hProcess, INFINITE) == WAIT_OBJECT_0) {
 
             ok = GetExitCodeProcess(pi.hProcess, &err);
-            if (ok)
+            if (ok) {
+
+                if (run_elevated_2 && err != 0) {
+                    WCHAR* errmsg = SbieDll_FormatMessage1(MSG_3205, ChildCmdLine);
+                    SetLastError(err);
+                    Show_Error(errmsg);
+                }
+
                 return err;
+            }
         }
     }
 
@@ -1933,6 +2876,18 @@ int __stdcall WinMainCRTStartup(
         if (display_run_dialog) {
             MyCoInitialize();
             ChildCmdLine = DoRunDialog(GetModuleHandle(NULL));
+            if (ChildCmdLine)
+            {
+                PWSTR pBegin = ChildCmdLine;
+                PWSTR pEnd = Eat_String(ChildCmdLine);
+                if (*ChildCmdLine == L'\"' && pEnd - ChildCmdLine > 2)
+                    pBegin++;
+				while (pBegin < --pEnd && *pEnd != L'\\');
+				
+				ChildWrkDir = (WCHAR *)HeapAlloc(GetProcessHeap(), HEAP_GENERATE_EXCEPTIONS, (pEnd - pBegin + 2) * sizeof(WCHAR));
+				wmemcpy(ChildWrkDir, pBegin, pEnd - pBegin + 1);
+				ChildWrkDir[pEnd - pBegin] = L'\0';
+            }
         } else if (execute_open_with) {
             MyCoInitialize();
             WCHAR* CmdLine = DoRunDialog(GetModuleHandle(NULL));
@@ -2000,5 +2955,8 @@ int __stdcall WinMain(
     HINSTANCE hPrevInstance,
     LPSTR lpCmdLine, int nCmdShow)
 {
+    /*while (! IsDebuggerPresent())
+        Sleep(500);
+    __debugbreak();*/
     return WinMainCRTStartup(hInstance, hPrevInstance, lpCmdLine, nCmdShow);
 }

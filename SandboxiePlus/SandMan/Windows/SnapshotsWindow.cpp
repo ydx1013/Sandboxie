@@ -20,7 +20,7 @@ CSnapshotsWindow::CSnapshotsWindow(const CSandBoxPtr& pBox, QWidget *parent)
 	this->setWindowFlag(Qt::WindowStaysOnTopHint, theGUI->IsAlwaysOnTop());
 
 	ui.setupUi(this);
-	this->setWindowTitle(tr("%1 - Snapshots").arg(pBox->GetName()));
+	this->setWindowTitle(tr("%1 - Snapshots").arg(CSandMan::GetBoxDisplayName(pBox)));
 
 	ui.treeSnapshots->setAlternatingRowColors(theConf->GetBool("Options/AltRowColors", false));
 
@@ -35,6 +35,7 @@ CSnapshotsWindow::CSnapshotsWindow(const CSandBoxPtr& pBox, QWidget *parent)
 
 	m_pSnapshotModel = new CSimpleTreeModel(this);
 	m_pSnapshotModel->AddColumn(tr("Snapshot"), "Name");
+	m_pSnapshotModel->AddColumn(tr("Creation Time"), "DateFormatted");
 
 	/*m_pSortProxy = new CSortFilterProxyModel(this);
 	m_pSortProxy->setSortRole(Qt::EditRole);
@@ -51,12 +52,14 @@ CSnapshotsWindow::CSnapshotsWindow(const CSandBoxPtr& pBox, QWidget *parent)
 	connect(ui.treeSnapshots, SIGNAL(doubleClicked(const QModelIndex&)), this, SLOT(OnSelectSnapshot()));
 
 	
+	ui.btnRefresh->setIcon(CSandMan::GetIcon("Refresh"));
 	QMenu* pSelMenu = new QMenu(ui.btnSelect);
 	pSelMenu->addAction(tr("Revert to empty box"), this, SLOT(OnSelectEmpty()));
 	ui.btnSelect->setPopupMode(QToolButton::MenuButtonPopup);
 	ui.btnSelect->setMenu(pSelMenu);
 
 	connect(ui.btnTake, SIGNAL(clicked(bool)), this, SLOT(OnTakeSnapshot()));
+	connect(ui.btnRefresh, &QPushButton::clicked, this, &CSnapshotsWindow::Refresh);
 	connect(ui.btnSelect, SIGNAL(clicked(bool)), this, SLOT(OnSelectSnapshot()));
 	connect(ui.btnRemove, SIGNAL(clicked(bool)), this, SLOT(OnRemoveSnapshot()));
 	
@@ -89,6 +92,12 @@ void CSnapshotsWindow::closeEvent(QCloseEvent *e)
 	this->deleteLater();
 }
 
+void CSnapshotsWindow::Refresh()
+{
+	OnSaveInfo();
+	UpdateSnapshots(true);
+}
+
 void CSnapshotsWindow::UpdateSnapshots(bool AndSelect)
 {
 	m_SnapshotMap.clear();
@@ -104,6 +113,7 @@ void CSnapshotsWindow::UpdateSnapshots(bool AndSelect)
 			BoxSnapshot["Name"] = Snapshot.NameStr;
 		BoxSnapshot["Info"] = Snapshot.InfoStr;
 		BoxSnapshot["Date"] = Snapshot.SnapDate;
+		BoxSnapshot["DateFormatted"] = Snapshot.SnapDate.toString("yyyy-MM-dd hh:mm");
 		if(m_CurSnapshot == Snapshot.ID)
 			BoxSnapshot["IsBold"] = true;
 		m_SnapshotMap.insert(Snapshot.ID, BoxSnapshot);
@@ -111,12 +121,37 @@ void CSnapshotsWindow::UpdateSnapshots(bool AndSelect)
 	m_pSnapshotModel->Sync(m_SnapshotMap);
 	ui.treeSnapshots->expandAll();
 
+	if (ui.treeSnapshots->header()) {
+		QTimer::singleShot(0, this, [this]() {
+			int totalWidth = ui.treeSnapshots->width();
+			ui.treeSnapshots->header()->resizeSection(0, totalWidth * 0.7);
+			ui.treeSnapshots->header()->resizeSection(1, totalWidth * 0.3);
+		});
+		ui.treeSnapshots->header()->setSectionResizeMode(0, QHeaderView::Interactive);
+		ui.treeSnapshots->header()->setSectionResizeMode(1, QHeaderView::Interactive);
+		ui.treeSnapshots->header()->setMinimumSectionSize(100);
+		ui.treeSnapshots->header()->setSortIndicatorShown(false);
+	}
+
 	if (AndSelect)
 	{
+		QSignalBlocker Blocker(ui.treeSnapshots->selectionModel());
 		QModelIndex CurIndex = m_pSnapshotModel->FindIndex(m_CurSnapshot);
 		if (CurIndex.isValid()) {
-			ui.treeSnapshots->selectionModel()->select(CurIndex, QItemSelectionModel::ClearAndSelect);
+			ui.treeSnapshots->setCurrentIndex(CurIndex);
 			UpdateSnapshot(CurIndex);
+		}
+		else {
+			ui.treeSnapshots->clearSelection();
+			m_SelectedID.clear();
+			m_SaveInfoPending = -1;
+			ui.txtName->clear();
+			ui.chkDefault->setChecked(false);
+			ui.txtInfo->clear();
+			m_SaveInfoPending = 0;
+			ui.groupBox->setEnabled(false);
+			ui.btnSelect->setEnabled(false);
+			ui.btnRemove->setEnabled(false);
 		}
 	}
 }

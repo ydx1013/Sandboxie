@@ -110,7 +110,7 @@ enum {
     DLL_IMAGE_ACROBAT_READER,
     DLL_IMAGE_OFFICE_OUTLOOK,
     DLL_IMAGE_OFFICE_EXCEL,
-    DLL_IMAGE_FLASH_PLAYER_SANDBOX,
+    DLL_IMAGE_FLASH_PLAYER_SANDBOX, // obsolete
     DLL_IMAGE_PLUGIN_CONTAINER,
     DLL_IMAGE_OTHER_WEB_BROWSER,
     DLL_IMAGE_OTHER_MAIL_CLIENT,
@@ -208,6 +208,21 @@ typedef struct _THREAD_DATA {
     ULONG           sh32_shell_execute;
 
     //
+    // shell module: notification trace de-duplication
+    //
+
+    BOOLEAN         sh32_notify_trace_active;
+    BOOLEAN         sh32_notify_trace_valid;
+    BOOLEAN         sh32_notify_trace_proxy;
+    BOOLEAN         sh32_notify_trace_guid_valid;
+    ULONG           sh32_notify_trace_message;
+    ULONG           sh32_notify_trace_cb_size;
+    ULONG           sh32_notify_trace_flags;
+    ULONG           sh32_notify_trace_hwnd;
+    ULONG           sh32_notify_trace_uid;
+    GUID            sh32_notify_trace_guid;
+
+    //
     // gui module
     //
 
@@ -302,7 +317,7 @@ extern BOOLEAN Dll_AppContainerToken;
 extern BOOLEAN Dll_ChromeSandbox;
 extern BOOLEAN Dll_FirstProcessInBox;
 extern BOOLEAN Dll_CompartmentMode;
-//extern BOOLEAN Dll_AlernateIpcNaming;
+extern BOOLEAN Dll_AlternateIpcNaming;
 
 extern ULONG Dll_ImageType;
 
@@ -311,6 +326,8 @@ extern ULONG Dll_Windows;
 
 extern PSECURITY_DESCRIPTOR Secure_NormalSD;
 extern PSECURITY_DESCRIPTOR Secure_EveryoneSD;
+
+extern BOOLEAN Secure_CopyACLs;
 
 extern BOOLEAN Secure_FakeAdmin;
 
@@ -324,6 +341,7 @@ extern const WCHAR *Scm_CryptSvc;
 
 extern BOOLEAN Dll_SbieTrace;
 extern BOOLEAN Dll_ApiTrace;
+extern BOOLEAN Dll_FileTrace;
 
 
 //---------------------------------------------------------------------------
@@ -347,6 +365,7 @@ extern const WCHAR *DllName_secur32;
 extern const WCHAR *DllName_sspicli;
 extern const WCHAR *DllName_mscoree;
 extern const WCHAR *DllName_ntmarta;
+extern const WCHAR *DllName_winmm;
 
 
 #define DllName_ole32_or_combase \
@@ -425,9 +444,6 @@ NTSTATUS Dll_GetCurrentSidString(UNICODE_STRING *SidString);
 //---------------------------------------------------------------------------
 // Functions (dllhook)
 //---------------------------------------------------------------------------
-
-NTSTATUS Dll_GetSettingsForImageName(
-    const WCHAR* setting, WCHAR* value, ULONG value_size, const WCHAR* deftext);
 
 BOOLEAN Dll_SkipHook(const WCHAR *HookName);
 
@@ -515,7 +531,7 @@ NTSTATUS Key_NtDeleteKeyTreeImpl(HANDLE KeyHandle, BOOLEAN DeleteTree);
 
 NTSTATUS Key_MarkDeletedAndClose(HANDLE KeyHandle);
 
-void Key_DiscardMergeByPath(const WCHAR *TruePath, BOOLEAN Recurse);
+void Key_UpdateMergeByPath(const WCHAR *TruePath, BOOLEAN Removed, BOOLEAN Added);
 
 void Key_NtClose(HANDLE KeyHandle, void* CloseParams);
 
@@ -600,6 +616,8 @@ ULONG_PTR ProtectCall3(
 ULONG_PTR ProtectCall4(
     void *CallAddress,
     ULONG_PTR Arg1, ULONG_PTR Arg2, ULONG_PTR Arg3, ULONG_PTR Arg4);
+
+BOOL SH32_BreakoutDocument(const WCHAR* path, ULONG len);
 
 BOOL SH32_DoRunAs(
     const WCHAR *CmdLine, const WCHAR *WorkDir,
@@ -792,6 +810,10 @@ BOOLEAN Pdh_Init(HMODULE hmodule);
 
 BOOLEAN NsiRpc_Init(HMODULE);
 
+//BOOLEAN Wininet_Init(HMODULE);
+
+BOOLEAN Nsi_Init(HMODULE);
+
 BOOLEAN Ntmarta_Init(HMODULE);
 
 BOOLEAN Acscmonitor_Init(HMODULE);
@@ -800,6 +822,7 @@ BOOLEAN DigitalGuardian_Init(HMODULE);
 
 BOOLEAN ComDlg32_Init(HMODULE);
 
+DWORD Dll_rand(void);
 
 //---------------------------------------------------------------------------
 // Functions (Config)

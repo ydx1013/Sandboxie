@@ -11,6 +11,7 @@ enum ESbieExMsgCodes
 	SBX_7zCreateFailed,
 	SBX_7zOpenFailed,
 	SBX_7zExtractFailed,
+	SBX_FailedCopyDir,
 	SBX_NotBoxArchive
 };
 
@@ -20,10 +21,6 @@ class CSbiePlusAPI : public CSbieAPI
 public:
 	CSbiePlusAPI(QObject* parent);
 	virtual ~CSbiePlusAPI();
-
-	virtual void			UpdateWindowMap();
-
-	virtual QString			GetProcessTitle(quint32 pid) { return m_WindowMap.value(pid); }
 
 	virtual bool			IsRunningAsAdmin();
 
@@ -53,7 +50,6 @@ protected:
 	virtual CBoxedProcessPtr OnProcessBoxed(quint32 ProcessId, const QString& Path, const QString& Box, quint32 ParentId, const QString& CmdLine);
 
 	int						m_JobCount;
-	QMultiMap<quint32, QString> m_WindowMap;
 
 	friend class CSandBoxPlus;
 	class CBoxMonitor*		m_BoxMonitor;
@@ -72,10 +68,17 @@ public:
 	CSandBoxPlus(const QString& BoxName, class CSbieAPI* pAPI);
 	virtual ~CSandBoxPlus();
 
-	virtual QString			GetDisplayName() const;
+	enum EDisplayNameContext
+	{
+		eDisplayNormal,
+		eDisplayCompact
+	};
 
-	SB_PROGRESS				ExportBox(const QString& FileName, const QString& Password = "", int Level = 5, bool Solid = false);
-	SB_PROGRESS				ImportBox(const QString& FileName, const QString& RootFolder,const QString& Password);
+	virtual QString			GetDisplayName(EDisplayNameContext Context = eDisplayNormal) const;
+	static QString			FormatDisplayName(const QString& BoxName, const QString& BoxAlias, int DisplayMode, EDisplayNameContext Context = eDisplayNormal);
+	virtual QString			GetBoxToolTip() const;
+
+	SB_PROGRESS				CopyBox(const QString& DestDir);
 
 	virtual void			UpdateDetails();
 
@@ -93,7 +96,7 @@ public:
 	virtual SB_PROGRESS		RemoveSnapshot(const QString& ID)	{ BeginModifyingBox(); SB_PROGRESS Status = CSandBox::RemoveSnapshot(ID); ConnectEndSlot(Status); return Status; }
 	virtual SB_PROGRESS		SelectSnapshot(const QString& ID)	{ BeginModifyingBox(); SB_PROGRESS Status = CSandBox::SelectSnapshot(ID); ConnectEndSlot(Status); return Status; }
 
-	virtual SB_STATUS		ImBoxMount(const QString& Password = QString(), bool bProtect = false, bool bAutoUnmount = false) { BeginModifyingBox(); SB_STATUS Status = CSandBox::ImBoxMount(Password, bProtect, bAutoUnmount); ConnectEndSlot(Status); return Status; }
+	virtual SB_STATUS		ImBoxMount(const QString& Password = QString(), int iProtect = 0, bool bAutoUnmount = false) { BeginModifyingBox(); SB_STATUS Status = CSandBox::ImBoxMount(Password, iProtect, bAutoUnmount); ConnectEndSlot(Status); return Status; }
 	virtual SB_STATUS		ImBoxUnmount()						{ BeginModifyingBox(); SB_STATUS Status = CSandBox::ImBoxUnmount(); if(!Status.IsError()) m_Mount.clear(); ConnectEndSlot(Status); return Status; }
 
 	virtual bool			IsEmpty() const;
@@ -171,7 +174,7 @@ public:
 	class CRecoveryWindow*	m_pRecoveryWnd;
 
 	bool					IsBoxBusy() const { return IsSizePending() || !m_JobQueue.isEmpty(); }
-	SB_STATUS				DeleteContentAsync(bool DeleteSnapshots = true, bool bOnAutoDelete = false);
+	SB_STATUS				DeleteContentAsync(bool DeleteSnapshots = true, bool UseCurrentSnapshot = false);
 
 	struct SLink {
 		SLink() :Url(false), IconIndex(0) {}
@@ -222,8 +225,7 @@ protected:
 	void					AddJobToQueue(CBoxJob* pJob);
 	void					StartNextJob();
 
-	static void				ExportBoxAsync(const CSbieProgressPtr& pProgress, const QString& ExportPath, const QString& RootPath, const QString& Section, const QVariantMap& Params);
-	static void				ImportBoxAsync(const CSbieProgressPtr& pProgress, const QString& ImportPath, const QString& RootPath, const QString& BoxName, const QString& Password);
+	static void				CopyBoxAsync(const CSbieProgressPtr& pProgress, const QString& SrcDir, const QString& DestDir);
 
 	bool					IsFileDeleted(const QString& RealPath, const QString& Snapshot, const QStringList& SnapshotList, const QMap<QString, QList<QString>>& DeletedPaths);
 
@@ -259,6 +261,7 @@ protected:
 	bool					m_NoForce;
 	QRgb					m_BoxColor;
 	QString					m_BoxAlias;
+	int						m_BoxAliasDisplayMode;
 };
 
 ///////////////////////////////////////////////////////////////////////////////

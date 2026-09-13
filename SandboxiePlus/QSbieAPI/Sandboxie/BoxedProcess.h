@@ -55,6 +55,7 @@ public:
 
 	virtual bool			HasElevatedToken() const { return m_ProcessInfo.IsElevated; }
 	virtual bool			HasSystemToken() const { return m_ProcessInfo.IsSystem; }
+	virtual bool			HasFakeToken() const { return m_ProcessInfo.IsFakeAdmin; }
 	virtual bool			HasRestrictedToken() const { return m_ProcessInfo.IsRestricted; }
 	virtual bool			HasAppContainerToken() const { return m_ProcessInfo.IsAppContainer; }
 
@@ -64,8 +65,11 @@ public:
 	virtual void			ResolveSymbols(const QVector<quint64>& Addresses);
 	virtual QString			GetSymbol(quint64 Address) { return m_Symbols.value(Address).Name; }
 
+signals:
+	void					SymbolChanged(quint64 Address);
+
 public slots:
-	virtual void			OnSymbol(quint64 Address, const QString& Name) { m_Symbols[Address].Name = Name; }
+	virtual void			OnSymbol(quint64 Address, const QString& Name);
 
 protected:
 	friend class CSbieAPI;
@@ -98,7 +102,8 @@ protected:
 				IsSystem : 1,
 				IsRestricted : 1,
 				IsAppContainer : 1,
-				Spare : 27;
+				IsFakeAdmin : 1,
+				Spare : 26;
 		};
 	}						m_ProcessInfo;
 

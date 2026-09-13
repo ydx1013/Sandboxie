@@ -27,6 +27,9 @@
 #include "msgs/msgs.h"
 #include "common/my_version.h"
 
+extern const WCHAR* GetBoxDisplayName(const WCHAR* boxName, WCHAR* buffer,
+    SIZE_T bufferChars, BOOL compact);
+
 
 //---------------------------------------------------------------------------
 // Structures
@@ -548,10 +551,11 @@ _FX void BuildMenu_InsertItems(
 
 _FX void BuildMenu(HMENU hMenu, MENU_DIR *menu, WCHAR *fullpath)
 {
-    static WCHAR title[128];
+    static WCHAR title[512];
     static WCHAR *_explore = NULL;
     static WCHAR *_cancel = NULL;
     WCHAR boxname[BOXNAME_COUNT];
+    WCHAR boxdisplay[MAX_PATH + BOXNAME_COUNT + 4];
     MENUINFO menuinfo;
     MENUITEMINFO mii;
     BOOLEAN separator;
@@ -575,8 +579,10 @@ _FX void BuildMenu(HMENU hMenu, MENU_DIR *menu, WCHAR *fullpath)
         //
 
         SbieApi_QueryProcess(NULL, boxname, NULL, NULL, NULL);
-        wsprintf(
-            title, SbieDll_FormatMessage1(MSG_3111, boxname));
+        WCHAR* titleText = SbieDll_FormatMessage1(MSG_3111,
+            GetBoxDisplayName(boxname, boxdisplay, ARRAYSIZE(boxdisplay), FALSE));
+        wcsncpy_s(title, ARRAYSIZE(title), titleText, _TRUNCATE);
+        LocalFree(titleText);
 
         mii.cbSize = sizeof(mii);
         mii.fMask = MIIM_STATE | MIIM_STRING;
@@ -671,7 +677,14 @@ _FX void ScanFolder(MENU_DIR *menu, WCHAR *path, UCHAR source)
         BOOLEAN boxed = FALSE;
 
         if (wcscmp(data.cFileName, L".") != 0 &&
-            wcscmp(data.cFileName, L"..") != 0) {
+            wcscmp(data.cFileName, L"..") != 0 &&
+            // OneDrive On-Demand feature set both FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+            // and FILE_ATTRIBUTE_UNPINNED, to determine an expensive call, it should detect
+            // flags: FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | FILE_ATTRIBUTE_RECALL_ON_OPEN |
+            // FILE_ATTRIBUTE_OFFLINE.
+            //
+            // This filter only considers the intersection
+            (data.dwFileAttributes & FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS) == 0) {
 
             wcscpy(path_end + 1, data.cFileName);
 
@@ -1001,6 +1014,7 @@ _FX BOOL WriteStartMenuResult(const WCHAR *MapName, const WCHAR *Command)
     HANDLE hMapping;
     WCHAR *buf;
     WCHAR *IconPath;
+    WCHAR IconPathBuffer[SBIE_DLL_HANDLE_PATH_BUFFER_BYTES / sizeof(WCHAR)];
     ULONG len, IconIndex;
     BOOLEAN GetLinkIconPathAndNumber(
         WCHAR *LinkPath, WCHAR **IconPath, ULONG *IconIndex);
@@ -1058,12 +1072,15 @@ _FX BOOL WriteStartMenuResult(const WCHAR *MapName, const WCHAR *Command)
             if (hFile != INVALID_HANDLE_VALUE) {
 
                 BOOLEAN IsBoxedPath;
-                if (0 == SbieDll_GetHandlePath(
-                                    hFile, buf + 1024, &IsBoxedPath)) {
-                    if (SbieDll_TranslateNtToDosPath(buf + 1024)) {
-
-                        *(ULONG *)(buf + 1020) = IconIndex;
-                        ok = TRUE;
+                if (0 == SbieDll_GetHandlePath(hFile, IconPathBuffer, &IsBoxedPath)) {
+                    if (SbieDll_TranslateNtToDosPath(IconPathBuffer)) {
+                        len = wcslen(IconPathBuffer);
+                        if (len < 1024) {
+                            wmemcpy(buf + 1024, IconPathBuffer, len);
+                            buf[1024 + len] = L'\0';
+                            *(ULONG *)(buf + 1020) = IconIndex;
+                            ok = TRUE;
+                        }
                     }
                 }
 

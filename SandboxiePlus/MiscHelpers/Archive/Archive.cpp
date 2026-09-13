@@ -167,7 +167,11 @@ bool CArchive::Extract(QString Path)
 		if(File.Properties["IsDir"].toBool())
 			continue;
 
-		Files.insert(File.ArcIndex, new QFile(PrepareExtraction(File.Properties["Path"].toString(), Path)));
+		QString FilePath = PrepareExtraction(File.Properties["Path"].toString(), Path);
+		if(FilePath.isEmpty()) // entry tried to escape the target directory
+			continue;
+
+		Files.insert(File.ArcIndex, new QFile(FilePath));
 	}
 
 	return Extract(&Files);
@@ -255,21 +259,22 @@ bool CArchive::Update(QMap<int, QIODevice*> *FileList, bool bDelete, const SComp
 		*/
 		const wchar_t *names[] =
 		{
-			L"s",
 			L"x",
 			//L"mt",
+			L"s",
 			L"he"
 		};
 		const int kNumProps = sizeof(names) / sizeof(names[0]);
 		NWindows::NCOM::CPropVariant values[kNumProps] =
 		{
-			(Params ? Params->bSolid : false),		// solid mode OFF
 			(UInt32)(Params ? Params->iLevel : 5),	// compression level = 9 - ultra
 			//(UInt32)8,							// set number of CPU threads
-			true									// file name encryption (7z only)
+			// 7z only
+			(Params ? Params->bSolid : false),		// solid mode OFF
+			(Params ? Params->b7z : false)		    // file name encryption
 		};
 
-		if(setProperties->SetProperties(names, values, kNumProps) != S_OK)
+		if(setProperties->SetProperties(names, values, Params->b7z ? kNumProps : (kNumProps - 2)) != S_OK)
 		{
 			TRACE(L"ISetProperties failed");
 			Q_ASSERT(0);
@@ -388,18 +393,28 @@ QString CArchive::PrepareExtraction(QString FileName, QString Path)
 	// Cleanup
 	FileName.replace("\\","/");
 	FileName.remove(QRegularExpression("[:*?<>|\"]"));
-	if(FileName.left(1) == "/")
+	while(FileName.left(1) == "/")
 		FileName.remove(0,1);
 
-	// Create Sub Paths if needed
-	QString SubPath = Path;
-	int Pos = FileName.lastIndexOf("/");
-	if(Pos != -1)
-		SubPath += FileName.left(Pos);
-	if(!QDir().exists(SubPath))
-		QDir().mkpath(SubPath);
+	// Resolve the path and make sure it stays within the target directory,
+	// an archive can name its entries "../../foo" and alike (zip slip)
+	QString Root = QDir::cleanPath(Path);
+	if(Root.right(1) != "/")
+		Root.append("/");
+	QString FilePath = QDir::cleanPath(Root + FileName);
+	if(!FilePath.startsWith(Root))
+		return QString();
 
-	return Path + FileName;
+	// Create Sub Paths if needed
+	int Pos = FilePath.lastIndexOf("/");
+	if(Pos != -1)
+	{
+		QString SubPath = FilePath.left(Pos);
+		if(!QDir().exists(SubPath))
+			QDir().mkpath(SubPath);
+	}
+
+	return FilePath;
 }
 
 QString CArchive::GetNextPart(QString FileName)

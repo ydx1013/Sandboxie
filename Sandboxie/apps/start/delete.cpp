@@ -45,6 +45,9 @@
 
 extern void Show_Error(WCHAR *Descr);
 
+extern const WCHAR* GetBoxDisplayName(const WCHAR* boxName, WCHAR* buffer,
+    SIZE_T bufferChars, BOOL compact);
+
 extern void DeleteSandbox(
     const WCHAR *BoxName, BOOL bLogoff, BOOL bSilent, int phase);
 
@@ -278,15 +281,19 @@ void Error(const WCHAR *Descr, NTSTATUS Status)
     if (! g_Silent) {
 
         WCHAR text[512];
-        wcscpy(text, SbieDll_FormatMessage1(MSG_3214, g_BoxName));
-        wcscat(text, Descr);
+        WCHAR boxdisplay[MAX_PATH + BOXNAME_COUNT + 4];
+        WCHAR* prefix = SbieDll_FormatMessage1(MSG_3214,
+            GetBoxDisplayName(g_BoxName, boxdisplay, ARRAYSIZE(boxdisplay), FALSE));
+        wcsncpy_s(text, ARRAYSIZE(text), prefix, _TRUNCATE);
+        LocalFree(prefix);
+        wcsncat_s(text, ARRAYSIZE(text), Descr, _TRUNCATE);
         if (Status) {
             if (Status == STATUS_ACCESS_DENIED ||
                 Status == STATUS_SHARING_VIOLATION)
             {
-                wcscat(text, L"\n\n");
-                wcscat(text,
-                    SbieDll_FormatMessage0(MSG_3215));
+                wcsncat_s(text, ARRAYSIZE(text), L"\n\n", _TRUNCATE);
+                wcsncat_s(text, ARRAYSIZE(text),
+                    SbieDll_FormatMessage0(MSG_3215), _TRUNCATE);
             }
             SetLastError(RtlNtStatusToDosError(Status));
         }
@@ -474,7 +481,7 @@ void RenameSandbox(void)
 //---------------------------------------------------------------------------
 
 
-void LaunchProgram(WCHAR *cmdSrc, bool bWait)
+bool LaunchProgram(WCHAR *cmdSrc, bool bWait)
 {
     WCHAR cmd[768];
     ExpandEnvironmentStrings(cmdSrc, cmd, 760);
@@ -500,12 +507,7 @@ void LaunchProgram(WCHAR *cmdSrc, bool bWait)
             CloseHandle(pi.hProcess);
     }
 
-    if (! ok) {
-        WCHAR txt[1024];
-        wcscpy(txt, SbieDll_FormatMessage0(MSG_3222));
-        wcscat(txt, cmd);
-        Error(txt, 0);
-    }
+    return ok;
 }
 
 
@@ -527,7 +529,11 @@ NOINLINE void LaunchPhase2(void)
         wcscat(cmd, L"_silent");
     wcscat(cmd, L"_phase2");
 
-    LaunchProgram(cmd, FALSE);
+    bool ok = LaunchProgram(cmd, FALSE);
+
+    if (! ok) {
+        Error(SbieDll_FormatMessage1(MSG_3222, cmd), 0);
+    }
 }
 
 
@@ -642,7 +648,11 @@ void DeleteFilesInBox(const WCHAR *boxname)
 
             WCHAR cmd2[1536];
             TranslateCommand(cmd, cmd2, BoxFolder);
-            LaunchProgram(cmd2, TRUE);
+            bool ok = LaunchProgram(cmd2, TRUE);
+
+            if (! ok) {
+                Error(SbieDll_FormatMessage1(MSG_3222, cmd), 0);
+            }
         }
 
         if (! FindNextFile(hFind, &data))
@@ -1162,6 +1172,8 @@ int Delete_All_Sandboxes()
         if (index == -1)
             break;
         WCHAR* buf = GetBoxFilePath(BoxName, 0);
+        if (!buf)
+            continue;
 
         while(*buf)
         {
@@ -1186,6 +1198,10 @@ int Delete_All_Sandboxes()
 
         const WCHAR* BoxFolder = I->c_str();
 
+        DWORD attribs = GetFileAttributesW(BoxFolder);
+        if (attribs == INVALID_FILE_ATTRIBUTES)
+            continue;
+
         SetStatusMsg(MSG_3317, BoxFolder);
         WaitForFolder(BoxFolder, 10);
 
@@ -1198,7 +1214,12 @@ int Delete_All_Sandboxes()
         wcscpy(cmd, L"%SystemRoot%\\System32\\cmd.exe /c rmdir /s /q \"");
         wcscat(cmd, BoxFolder);
         wcscat(cmd, L"\"");
-        LaunchProgram(cmd, TRUE);
+        bool ok = LaunchProgram(cmd, TRUE);
+        
+        if (! ok) {
+            SetStatusMsg(MSG_3222, cmd);
+            Sleep(3000);
+        }
     }
 
     StopStatusDialog();

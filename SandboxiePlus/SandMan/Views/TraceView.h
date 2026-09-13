@@ -8,6 +8,8 @@
 #include "../../MiscHelpers/Common/SortFilterProxyModel.h"
 #include "StackView.h"
 
+class QToolButton;
+
 
 class CTraceTree : public CPanelView
 {
@@ -26,7 +28,7 @@ public:
 	CTraceModel*		m_pTraceModel;
 
 public slots:
-	void				SetFilter(const QString& Exp, int iOptions = 0, int Column = -1);
+	void				SetFilter(const QRegularExpression& Exp, int iOptions = 0, int Column = -1);
 
 	void				ItemSelection(const QItemSelection& selected, const QItemSelection& deselected);
 
@@ -50,7 +52,7 @@ protected:
 	//int					m_FilterCol;
 };
 
-class CMonitorList : public CPanelWidget<QTreeViewEx>
+class CMonitorList : public CPanelWidgetTmpl<QTreeViewEx>
 {
 public:
 
@@ -81,19 +83,24 @@ public slots:
 	void				OnSetTree();
 	void				OnObjTree();
 	void				OnSetMode();
-	void				OnSetPidFilter();
+	void				OnSetPidFilter(QStandardItem* item);
 	void				OnSetTidFilter();
 	void				OnSetFilter();
 	void				OnShowStack();
 
 private slots:
+	void				SelectProcess(quint64 PID);
 	void				UpdateFilters();
 	void				OnFilterChanged();
 
 	void				SaveToFile();
 
 protected:
+	bool				eventFilter(QObject* source, QEvent* event) override;
 	void				timerEvent(QTimerEvent* pEvent);
+	bool				IsTraceAtBottom() const;
+	void				PositionAutoScrollIndicator();
+	void				UpdateAutoScrollIndicator();
 	int					m_uTimerID;
 
 	static void			SaveToFileAsync(const CSbieProgressPtr& pProgress, QVector<CTraceEntryPtr> ResourceLog, QIODevice* pFile);
@@ -112,7 +119,8 @@ protected:
 	QVector<CTraceEntryPtr> m_TraceList;
 	QMap<QString, CMonitorEntryPtr> m_MonitorMap;
 
-	quint32				m_FilterPid;
+	QSet<quint32>		m_ShowPids;
+	QSet<quint32>		m_HidePids;
 	quint32				m_FilterTid;
 	QList<quint32>		m_FilterTypes;
 	quint32				m_FilterStatus;
@@ -127,12 +135,13 @@ protected:
 	QAction*			m_pMonitorMode;
 	QAction*			m_pTraceTree;
 	QAction*			m_pObjectTree;
-	QComboBox*			m_pTracePid;
+	class CCheckableComboBox*	m_pTracePid;
 	QComboBox*			m_pTraceTid;
 	class QCheckList*	m_pTraceType;
 	QComboBox*			m_pTraceStatus;
 	QAction*			m_pAllBoxes;
 	QAction*			m_pShowStack;
+	QToolButton*		m_pResumeAutoScroll;
 	QAction*			m_pSaveToFile;
 
 	QWidget*			m_pView;
@@ -150,10 +159,14 @@ class CTraceWindow : public QDialog
 public:
 	CTraceWindow(QWidget *parent = Q_NULLPTR);
 	~CTraceWindow();
+	void		CloseWithoutPrompt();
 
 signals:
 	void		Closed();
 
 protected:
 	void		closeEvent(QCloseEvent *e);
+
+private:
+	bool		m_bPromptOnClose;
 };

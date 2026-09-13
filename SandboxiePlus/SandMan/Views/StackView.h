@@ -21,11 +21,11 @@ public slots:
 	void					Clear()			{ m_pStackList->clear(); }
 	void					Invalidate();
 	void					ShowStack(const QVector<quint64>& Stack, const CBoxedProcessPtr& pProcess);
+	void					OnSymbolChanged(quint64 Address);
 
 	//void					OnMenu(const QPoint &point);
 
-	void					SetFilter(const QRegularExpression& Exp, bool bHighLight = false, int Col = -1); // -1 = any
-	void					SetFilter(const QString& Exp, int iOptions = 0, int Col = -1); // -1 = any
+	void					SetFilter(const QRegularExpression& Exp, int iOptions = 0, int Col = -1); // -1 = any
 
 protected:
 	//virtual void				OnMenu(const QPoint& Point);
@@ -44,6 +44,8 @@ private:
 
 	bool					m_bIsInvalid;
 	QTreeWidgetEx*			m_pStackList;
+	QVector<quint64>		m_CurrentStack;
+	CBoxedProcessPtr		m_pCurrentProcess;
 
 	CFinder*				m_pFinder;
 
